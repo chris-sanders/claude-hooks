@@ -829,6 +829,57 @@ if __name__ == "__main__":
             "Initial framework logs should appear before function logs"
         )
 
+    def test_logging_path_relative_to_hook_file(self, tmp_path):
+        """Test that logs are created relative to the hook file, not the current working directory."""
+        # Create a hook in a subdirectory
+        hook_dir = tmp_path / "hook_subdir"
+        hook_dir.mkdir()
+        
+        hook_content = """
+from claude_hooks import run_hooks
+
+def test_hook(event):
+    event.logger.info("Hook executed from subdirectory")
+    return event.undefined()
+
+if __name__ == "__main__":
+    run_hooks(test_hook)
+"""
+        
+        hook_file = hook_dir / "subdir_hook.py"
+        hook_file.write_text(hook_content)
+        
+        payload = {
+            "hook_event_name": "Notification",
+            "tool_name": None,
+            "tool_input": {},
+        }
+        
+        # Run the hook from the parent directory (different from hook location)
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            cwd=str(tmp_path),  # Running from parent directory
+        )
+        
+        assert result.returncode == 0
+        
+        # Verify logs were created in the hook's directory, not the cwd
+        hook_log_file = hook_dir / "logs" / "notification.log"
+        assert hook_log_file.exists(), "Log file should be created relative to hook file location"
+        
+        # Verify no logs were created in the cwd
+        cwd_log_file = tmp_path / "logs" / "notification.log"
+        assert not cwd_log_file.exists(), "Log file should not be created in current working directory"
+        
+        # Verify log content
+        log_content = hook_log_file.read_text()
+        assert "Hook executed from subdirectory" in log_content
+        assert "[test_hook]" in log_content
+
     def test_logging_level_environment_variable(self, tmp_path, monkeypatch):
         """Test that CLAUDE_HOOKS_LOG_LEVEL environment variable controls logging level."""
         # Set DEBUG level

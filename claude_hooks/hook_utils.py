@@ -53,6 +53,7 @@ return event.block_json("reason", stop_reason="Manual review required")
 ```
 """
 
+import inspect
 import json
 import logging
 import logging.handlers
@@ -209,9 +210,31 @@ class JsonResult:
 def setup_logging(hook_name: str, event_name: str | None = None) -> None:
     """Setup logging for a specific hook"""
 
-    # Create logs directory in current working directory
-    # This ensures logs go where the hook is being executed from
-    log_dir = Path.cwd() / "logs"
+    # Create logs directory relative to the hook file location
+    # Walk up the call stack to find the hook script file
+    hook_script_path = None
+
+    # Look through the call stack to find the main script file
+    for frame_info in inspect.stack():
+        frame_path = Path(frame_info.filename)
+        # Skip our own module files and Python built-ins
+        if (
+            frame_path.name != "hook_utils.py"
+            and not frame_path.name.startswith("<")
+            and frame_path.suffix == ".py"
+        ):
+            hook_script_path = frame_path
+            break
+
+    # Error if we can't determine hook location - this shouldn't happen
+    if not hook_script_path:
+        print(
+            "Error: Unable to determine hook script location for logging setup",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    log_dir = hook_script_path.parent / "logs"
 
     log_dir.mkdir(parents=True, exist_ok=True)
 
