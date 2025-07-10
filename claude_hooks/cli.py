@@ -18,14 +18,15 @@ Notification hook example for claude-hooks.
 This hook responds to various Claude Code notifications.
 """
 
-from claude_hooks import HookContext, run_hooks, neutral
+from claude_hooks import run_hooks
 
 
-def notification_hook(ctx: HookContext):
+def notification_hook(event):
     """Handle notification events."""
     # Add your notification handling logic here
-    print(f"Notification received: {ctx.event}")
-    return neutral()
+    print(f"Notification received: {event.name}")
+    # Notification hooks don't support decisions - return None for undefined behavior
+    return None
 
 
 if __name__ == "__main__":
@@ -36,20 +37,18 @@ Pre-tool-use hook example for claude-hooks.
 This hook can validate and potentially block tool execution.
 """
 
-from claude_hooks import HookContext, PreToolUse, run_hooks, neutral, block
+from claude_hooks import run_hooks
 
 
-def pre_tool_use_hook(ctx: HookContext):
+def pre_tool_use_hook(event):
     """Validate tool usage before execution."""
-    event = PreToolUse(ctx)
-
     # Example: Block dangerous bash commands
     if event.tool_name == "Bash":
-        command = event.get_input("command", "")
+        command = event.tool_input.get("command", "")
         if any(dangerous in command.lower() for dangerous in ["rm -rf", "sudo rm"]):
-            return block(f"Dangerous command blocked: {command}")
+            return event.block(f"Dangerous command blocked: {command}")
 
-    return neutral()
+    return event.undefined()
 
 
 if __name__ == "__main__":
@@ -60,17 +59,19 @@ Post-tool-use hook example for claude-hooks.
 This hook processes tool results after execution.
 """
 
-from claude_hooks import HookContext, PostToolUse, run_hooks, neutral
+from claude_hooks import run_hooks
 
 
-def post_tool_use_hook(ctx: HookContext):
+def post_tool_use_hook(event):
     """Process tool results after execution."""
-    event = PostToolUse(ctx)
-
-    # Example: Log tool usage
+    # Example: Log tool usage and optionally block on errors
     print(f"Tool {event.tool_name} executed successfully")
 
-    return neutral()
+    # PostToolUse hooks can only block or undefined (no approve)
+    if event.tool_response.get("error"):
+        return event.block("Tool execution failed")
+
+    return event.undefined()
 
 
 if __name__ == "__main__":
@@ -81,17 +82,23 @@ Stop hook example for claude-hooks.
 This hook runs when Claude finishes a conversation.
 """
 
-from claude_hooks import HookContext, Stop, run_hooks, neutral
+from claude_hooks import run_hooks
 
 
-def stop_hook(ctx: HookContext):
+def stop_hook(event):
     """Handle conversation stop events."""
-    event = Stop(ctx)
-
-    # Example: Log conversation end
+    # Example: Log conversation end, optionally prevent stopping
     print("Claude conversation ended")
 
-    return neutral()
+    # Stop hooks can block stopping or undefined (no approve)
+    # Example: Block if stop_hook_active to prevent infinite loops
+    if event.stop_hook_active:
+        return event.undefined()  # Already continuing, don't block again
+
+    # Uncomment to prevent Claude from stopping:
+    # return event.block("Continue working on the task")
+
+    return event.undefined()
 
 
 if __name__ == "__main__":
@@ -102,21 +109,39 @@ Subagent stop hook example for claude-hooks.
 This hook runs when a Claude subagent stops.
 """
 
-from claude_hooks import HookContext, SubagentStop, run_hooks, neutral
+from claude_hooks import run_hooks
 
 
-def subagent_stop_hook(ctx: HookContext):
+def subagent_stop_hook(event):
     """Handle subagent stop events."""
-    event = SubagentStop(ctx)
-
     # Example: Log subagent completion
     print("Claude subagent stopped")
 
-    return neutral()
+    return event.undefined()
 
 
 if __name__ == "__main__":
     run_hooks(subagent_stop_hook)
+''',
+    "pre_compact.py": '''"""
+Pre-compact hook example for claude-hooks.
+This hook runs before conversation compaction.
+"""
+
+from claude_hooks import run_hooks
+
+
+def pre_compact_hook(event):
+    """Handle pre-compaction events."""
+    # Example: Log before compaction
+    print("Conversation about to be compacted")
+    
+    # PreCompact hooks only support undefined behavior - no blocking or approving
+    return event.undefined()
+
+
+if __name__ == "__main__":
+    run_hooks(pre_compact_hook)
 ''',
 }
 
@@ -148,6 +173,12 @@ DEFAULT_SETTINGS = {
             {
                 "matcher": "",
                 "hooks": [{"type": "command", "command": "uv run subagent_stop.py"}],
+            }
+        ],
+        "PreCompact": [
+            {
+                "matcher": "",
+                "hooks": [{"type": "command", "command": "uv run pre_compact.py"}],
             }
         ],
     }
@@ -215,6 +246,13 @@ def merge_settings(
 
 
 @main.command()
+@click.argument(
+    "hook_types",
+    nargs=-1,
+    type=click.Choice(
+        ["notification", "pre-tool-use", "post-tool-use", "stop", "subagent-stop", "pre-compact"]
+    ),
+)
 @click.option(
     "--dir",
     "-d",
@@ -240,24 +278,19 @@ def merge_settings(
     is_flag=True,
     help="Use settings.local.json instead of settings.json",
 )
-@click.option("--notification", is_flag=True, help="Create notification hook")
-@click.option("--pre-tool-use", is_flag=True, help="Create pre-tool-use hook")
-@click.option("--post-tool-use", is_flag=True, help="Create post-tool-use hook")
-@click.option("--stop", is_flag=True, help="Create stop hook")
-@click.option("--subagent-stop", is_flag=True, help="Create subagent-stop hook")
 def init(
+    hook_types: tuple[str, ...],
     dir: str,
     force: bool,
     force_global: bool,
     force_project: bool,
     use_local: bool,
-    notification: bool,
-    pre_tool_use: bool,
-    post_tool_use: bool,
-    stop: bool,
-    subagent_stop: bool,
 ):
-    """Initialize a directory with Claude Code hook templates."""
+    """Initialize a directory with Claude Code hook templates.
+
+    HOOK_TYPES: Optional hook types to create (notification, pre-tool-use, post-tool-use, stop, subagent-stop).
+    If none specified, creates all hook types.
+    """
     target_dir = Path(dir).resolve()
 
     # Validate conflicting flags
@@ -278,19 +311,24 @@ def init(
 
     # Determine which hooks to create
     requested_hooks = {}
-    if notification:
-        requested_hooks["notification.py"] = HOOK_TEMPLATES["notification.py"]
-    if pre_tool_use:
-        requested_hooks["pre_tool_use.py"] = HOOK_TEMPLATES["pre_tool_use.py"]
-    if post_tool_use:
-        requested_hooks["post_tool_use.py"] = HOOK_TEMPLATES["post_tool_use.py"]
-    if stop:
-        requested_hooks["stop.py"] = HOOK_TEMPLATES["stop.py"]
-    if subagent_stop:
-        requested_hooks["subagent_stop.py"] = HOOK_TEMPLATES["subagent_stop.py"]
 
-    # If no specific hooks requested, create all
-    if not requested_hooks:
+    # Map hook type names to filenames
+    hook_type_map = {
+        "notification": "notification.py",
+        "pre-tool-use": "pre_tool_use.py",
+        "post-tool-use": "post_tool_use.py",
+        "stop": "stop.py",
+        "subagent-stop": "subagent_stop.py",
+        "pre-compact": "pre_compact.py",
+    }
+
+    if hook_types:
+        # Create only specified hooks
+        for hook_type in hook_types:
+            filename = hook_type_map[hook_type]
+            requested_hooks[filename] = HOOK_TEMPLATES[filename]
+    else:
+        # If no specific hooks requested, create all
         requested_hooks = HOOK_TEMPLATES.copy()
 
     # Create hooks subdirectory
@@ -324,6 +362,7 @@ def init(
         "post_tool_use.py": "PostToolUse",
         "stop.py": "Stop",
         "subagent_stop.py": "SubagentStop",
+        "pre_compact.py": "PreCompact",
     }
 
     for filename in requested_hooks.keys():
@@ -407,6 +446,7 @@ def find_hook_file(event_name: str, search_dir: Path | None = None) -> Path | No
         "post-tool-use": "post_tool_use.py",
         "stop": "stop.py",
         "subagent-stop": "subagent_stop.py",
+        "pre-compact": "pre_compact.py",
     }
 
     expected_file = event_to_file.get(event_name)
@@ -438,7 +478,7 @@ def create_test_payload(event_name: str, **kwargs) -> dict[str, Any]:
             {
                 "hook_event_name": "PreToolUse",
                 "tool_name": kwargs.get("tool", "Bash"),
-                "input": {
+                "tool_input": {
                     "command": kwargs.get("command", "echo 'test'"),
                     **{
                         k: v
@@ -454,7 +494,7 @@ def create_test_payload(event_name: str, **kwargs) -> dict[str, Any]:
             {
                 "hook_event_name": "PostToolUse",
                 "tool_name": kwargs.get("tool", "Bash"),
-                "input": {"command": kwargs.get("command", "echo 'test'")},
+                "tool_input": {"command": kwargs.get("command", "echo 'test'")},
                 "tool_response": {
                     "output": kwargs.get("output", "test output"),
                     "error": kwargs.get("error", ""),
@@ -483,6 +523,16 @@ def create_test_payload(event_name: str, **kwargs) -> dict[str, Any]:
                 "hook_event_name": "SubagentStop",
                 "transcript_path": kwargs.get(
                     "transcript_path", "/tmp/test-subagent-transcript.txt"
+                ),
+            }
+        )
+
+    elif event_name == "pre-compact":
+        base_payload.update(
+            {
+                "hook_event_name": "PreCompact",
+                "transcript_path": kwargs.get(
+                    "transcript_path", "/tmp/test-transcript.txt"
                 ),
             }
         )
@@ -519,7 +569,7 @@ def run_hook_test(
 @click.argument(
     "event_type",
     type=click.Choice(
-        ["notification", "pre-tool-use", "post-tool-use", "stop", "subagent-stop"]
+        ["notification", "pre-tool-use", "post-tool-use", "stop", "subagent-stop", "pre-compact"]
     ),
 )
 @click.option("--message", help="Message for notification events")

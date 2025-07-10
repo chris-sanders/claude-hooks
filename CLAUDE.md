@@ -48,7 +48,7 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 ### Core Components
 
 **`claude_hooks/hook_utils.py`** - The main framework providing:
-- `HookContext` - Raw hook context from Claude Code with event, tool, input, and response data
+- `EventContext` - Raw event context from Claude Code with event, tool, input, and response data
 - `HookResult` - Result object with `Decision` enum (BLOCK, APPROVE, NEUTRAL)
 - `run_hooks()` - Framework runner supporting single or multiple hooks with parallel execution
 - Event-specific helper classes: `Notification`, `PreToolUse`, `PostToolUse`, `Stop`
@@ -56,9 +56,20 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 
 ### Hook Event System
 
-Hooks receive JSON payloads from Claude Code via stdin and must exit with specific codes:
+Hooks receive JSON payloads from Claude Code via stdin and can return output in two ways:
+
+### Simple Exit Code Output
 - Exit 0: Success/approve (stderr shown to user in transcript mode)
 - Exit 2: Block operation (stderr fed back to Claude)
+
+### Advanced JSON Output
+Hooks can return structured JSON to stdout for more sophisticated control:
+- **Decision Control**: "approve", "block", or undefined (let Claude decide)
+- **Continue Control**: Stop Claude from continuing with `"continue": false`
+- **Output Suppression**: Hide stdout from transcript with `"suppressOutput": true`
+- **Stop Reason**: Custom message when stopping Claude
+
+Both upstream naming (`suppressOutput`, `stopReason`) and Python-style shortcuts (`suppress_output`, `stop_reason`) are supported.
 
 ### Hook Types
 
@@ -89,31 +100,62 @@ All hooks automatically get rotating file logging in `logs/` directory with form
 
 ### Creating New Hooks
 
-```python
-from hook_utils import HookContext, run_hooks, neutral, block
+#### Simple Exit Code Hooks (Basic)
 
-def my_hook(ctx: HookContext):
+```python
+from hook_utils import run_hooks
+
+def my_hook(event):
     # Your hook logic here
-    return neutral()  # or block("reason") or approve("reason")
+    return event.neutral()  # or event.block("reason") or event.approve("reason")
 
 if __name__ == "__main__":
     run_hooks(my_hook)
 ```
 
+#### Advanced JSON Output Hooks
+
+```python
+from hook_utils import run_hooks
+
+def advanced_hook(event):
+    # Block with JSON output
+    if event.tool_name == "Bash" and "rm -rf" in event.tool_input.get("command", ""):
+        return event.block_json("Dangerous command blocked")
+    
+    # Approve with suppressed output (upstream naming)
+    if event.tool_name == "Read":
+        return event.approve_json("File access approved", suppressOutput=True)
+    
+    # Approve with suppressed output (Python-style shortcut)
+    if event.tool_name == "Write":
+        return event.approve_json("Write approved", suppress_output=True)
+    
+    # Stop Claude from continuing
+    if "critical" in event.tool_input.get("file_path", ""):
+        return event.stop_claude("Critical file access requires manual review")
+    
+    return event.neutral_json()
+
+if __name__ == "__main__":
+    run_hooks(advanced_hook)
+```
+
 ### Using Event-Specific Helper Classes
 
 ```python
-from hook_utils import PreToolUse, create_event
+from hook_utils import run_hooks
 
-def my_pre_tool_hook(ctx: HookContext):
-    event = PreToolUse(ctx)
-    # or use: event = create_event(ctx)
-    
+def my_pre_tool_hook(event):
     if event.tool_name == "Bash":
-        command = event.get_input("command")
-        # Validate command logic
+        command = event.input.get("command", "")
+        if "dangerous" in command:
+            return event.block("Dangerous command detected")
     
-    return neutral()
+    return event.neutral()
+
+if __name__ == "__main__":
+    run_hooks(my_pre_tool_hook)
 ```
 
 ### Multiple Hook Support

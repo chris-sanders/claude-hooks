@@ -2,7 +2,55 @@
 """
 hook_utils.py - Shared utilities for Claude Code hooks
 
-Provides HookContext, HookResult, and run_hooks() for standardized hook development.
+Provides EventContext, HookResult, JsonResult, and run_hooks() for standardized hook development.
+
+## Basic Usage (Simple Exit Codes)
+
+```python
+from hook_utils import run_hooks
+
+def my_hook(event):
+    if event.tool_name == "Bash" and "dangerous" in event.tool_input.get("command", ""):
+        return event.block("Dangerous command detected")
+    return event.undefined()
+
+if __name__ == "__main__":
+    run_hooks(my_hook)
+```
+
+## Advanced Usage (JSON Output)
+
+```python
+from hook_utils import run_hooks
+
+def advanced_hook(event):
+    # Block with JSON output
+    if event.tool_name == "Bash" and "rm -rf" in event.tool_input.get("command", ""):
+        return event.block_json("Dangerous command blocked")
+
+    # Approve with suppressed output
+    if event.tool_name == "Read" and event.tool_input.get("file_path", "").endswith(".log"):
+        return event.approve_json("Log file access approved", suppress_output=True)
+
+    # Stop Claude from continuing
+    if event.tool_name == "Write" and "critical_config" in event.tool_input.get("file_path", ""):
+        return event.stop_claude("Critical configuration change requires manual review")
+
+    return event.undefined_json()
+
+if __name__ == "__main__":
+    run_hooks(advanced_hook)
+```
+
+## Both Upstream and Python-style naming supported:
+
+```python
+# Upstream naming (matches Claude Code docs exactly)
+return event.block_json("reason", stopReason="Manual review required")
+
+# Python-style shortcuts (more pythonic)
+return event.block_json("reason", stop_reason="Manual review required")
+```
 """
 
 import json
@@ -21,16 +69,16 @@ from typing import Any
 
 
 class Decision(Enum):
-    """Hook decision options"""
+    """Hook decision options - matches upstream exactly"""
 
     BLOCK = "block"
     APPROVE = "approve"
-    NEUTRAL = None  # Let Claude Code decide
+    # No NEUTRAL - use None for undefined (let Claude Code decide)
 
 
 @dataclass
-class HookContext:
-    """Raw hook context from Claude Code. Use specific hook classes for structured access."""
+class EventContext:
+    """Raw event context from Claude Code. Contains the raw JSON payload data."""
 
     event: str
     tool: str | None
@@ -39,7 +87,7 @@ class HookContext:
     full_payload: dict[str, Any] = None
 
     @classmethod
-    def from_stdin(cls) -> "HookContext":
+    def from_stdin(cls) -> "EventContext":
         """Create context from stdin JSON payload"""
         try:
             # Read stdin data
@@ -61,7 +109,7 @@ class HookContext:
             result = cls(
                 event=event,
                 tool=payload.get("tool_name"),  # None if not present
-                input=payload.get("input", {}),
+                input=payload.get("tool_input", {}),  # tool_input for tool events
                 response=payload.get("tool_response"),
                 full_payload=payload,
             )
@@ -79,7 +127,7 @@ class HookContext:
 class HookResult:
     """Internal result object. Use block(), approve(), or neutral() instead."""
 
-    def __init__(self, decision: Decision, reason: str = ""):
+    def __init__(self, decision: Decision | None, reason: str = ""):
         self.decision = decision
         self.reason = reason
 
@@ -96,8 +144,60 @@ class HookResult:
                 print(self.reason)  # stdout
             sys.exit(0)
         else:
-            # NEUTRAL - Exit 0: Let Claude Code decide (no output)
+            # Undefined (None) - Exit 0: Let Claude Code decide (no output)
             sys.exit(0)
+
+
+@dataclass
+class JsonResult:
+    """Advanced JSON output result with upstream naming and Python shortcuts"""
+
+    decision: Decision | None = None
+    reason: str = ""
+    continue_: bool = True  # 'continue' is Python keyword, use continue_
+    stopReason: str = ""  # Upstream naming  # noqa: N815
+    suppressOutput: bool = False  # Upstream naming  # noqa: N815
+
+    def __init__(
+        self,
+        decision: Decision | None = None,
+        reason: str = "",
+        continue_: bool = True,
+        stopReason: str = "",  # noqa: N803
+        suppressOutput: bool = False,  # noqa: N803
+        # Python-style shortcuts for convenience
+        stop_reason: str = "",
+        suppress_output: bool = False,
+    ):
+        self.decision = decision
+        self.reason = reason
+        self.continue_ = continue_
+        # Use shortcuts if provided, otherwise use upstream naming
+        self.stopReason = stop_reason if stop_reason else stopReason
+        self.suppressOutput = suppress_output if suppress_output else suppressOutput
+
+    def exit_with_result(self):
+        """Output JSON to stdout and exit with code 0"""
+        output = {}
+
+        # Add decision and reason if specified
+        if self.decision is not None:
+            output["decision"] = self.decision.value
+            if self.reason:
+                output["reason"] = self.reason
+
+        # Add continue control
+        if not self.continue_:
+            output["continue"] = False
+            if self.stopReason:
+                output["stopReason"] = self.stopReason
+
+        # Add output suppression
+        if self.suppressOutput:
+            output["suppressOutput"] = True
+
+        print(json.dumps(output))
+        sys.exit(0)
 
 
 # ============================================================================
@@ -187,7 +287,7 @@ def run_hooks(hooks) -> None:
 
     Args:
         hooks: Either:
-               - A single hook function: (ctx: HookContext) -> HookResult
+               - A single hook function: (event: BaseEvent) -> HookResult
                - A list of hook functions
     """
     # Handle single hook case
@@ -211,7 +311,8 @@ def run_hooks(hooks) -> None:
     import concurrent.futures
 
     try:
-        ctx = HookContext.from_stdin()
+        ctx = EventContext.from_stdin()
+        event = create_event(ctx)
         setup_logging(hook_name, ctx.event)
         logging.info(f"Running {len(hooks)} hooks for {ctx.event} on {ctx.tool}")
         logging.info(f"Raw payload: {json.dumps(ctx.full_payload, indent=2)}")
@@ -230,14 +331,18 @@ def run_hooks(hooks) -> None:
                     individual_name = f"hook_{i}"
 
                 # Submit hook for execution
-                futures[executor.submit(_execute_hook, hook, ctx)] = individual_name
+                futures[executor.submit(_execute_hook, hook, event)] = individual_name
 
             # Collect results - any block wins
             for future in concurrent.futures.as_completed(futures):
                 hook_name_individual = futures[future]
                 try:
                     result = future.result()
-                    if not isinstance(result, HookResult):
+                    # Handle None return (treat as undefined)
+                    if result is None:
+                        result = HookResult(None)
+
+                    if not isinstance(result, HookResult | JsonResult):
                         logging.error(
                             f"Hook {hook_name_individual} returned invalid result type"
                         )
@@ -247,12 +352,35 @@ def run_hooks(hooks) -> None:
                         )
                         sys.exit(2)
 
-                    if result.decision == Decision.BLOCK:
-                        logging.info(f"Hook {hook_name_individual} blocked operation")
+                    # Handle JsonResult - always exits immediately
+                    if isinstance(result, JsonResult):
+                        if result.decision == Decision.BLOCK:
+                            logging.info(
+                                f"Hook {hook_name_individual} blocked operation (JSON)"
+                            )
+                        elif result.decision == Decision.APPROVE:
+                            logging.info(
+                                f"Hook {hook_name_individual} approved operation (JSON)"
+                            )
+                        else:
+                            logging.info(
+                                f"Hook {hook_name_individual} returned JSON result"
+                            )
                         result.exit_with_result()
-                    elif result.decision == Decision.APPROVE:
-                        logging.info(f"Hook {hook_name_individual} approved operation")
-                        result.exit_with_result()
+
+                    # Handle HookResult - traditional behavior
+                    elif isinstance(result, HookResult):
+                        if result.decision == Decision.BLOCK:
+                            logging.info(
+                                f"Hook {hook_name_individual} blocked operation"
+                            )
+                            result.exit_with_result()
+                        elif result.decision == Decision.APPROVE:
+                            logging.info(
+                                f"Hook {hook_name_individual} approved operation"
+                            )
+                            result.exit_with_result()
+                        # If decision is None (undefined), continue to next hook
 
                 except Exception as e:
                     logging.error(f"Hook {hook_name_individual} failed: {e}")
@@ -271,12 +399,12 @@ def run_hooks(hooks) -> None:
         sys.exit(1)
 
 
-def _execute_hook(hook, ctx: HookContext) -> HookResult:
+def _execute_hook(hook, event: "BaseEvent") -> HookResult | JsonResult:
     """Execute a single hook function"""
     try:
         if not callable(hook):
             raise ValueError(f"Hook must be a callable function, got {type(hook)}")
-        return hook(ctx)
+        return hook(event)
     except Exception as e:
         raise Exception(f"Hook execution failed: {e}") from e
 
@@ -289,24 +417,24 @@ def _execute_hook(hook, ctx: HookContext) -> HookResult:
 class BaseEvent:
     """Base class for event-specific helpers with validation and field access."""
 
-    def __init__(self, ctx: HookContext):
-        self.ctx = ctx
+    def __init__(self, ctx: EventContext):
+        self._ctx = ctx
         self.validate_required_fields()
 
     def validate_required_fields(self):
         """Override in subclasses to validate event-specific requirements"""
-        if not self.ctx.event:
+        if not self._ctx.event:
             raise ValueError("Missing hook_event_name")
 
     def _validate_event(self, expected_event: str):
         """Helper to validate event type"""
-        if self.ctx.event != expected_event:
-            raise ValueError(f"Expected {expected_event} event, got {self.ctx.event}")
+        if self._ctx.event != expected_event:
+            raise ValueError(f"Expected {expected_event} event, got {self._ctx.event}")
 
     def _validate_tool_present(self):
         """Helper to validate tool is present"""
-        if not self.ctx.tool:
-            raise ValueError(f"{self.ctx.event} event missing tool_name")
+        if not self._ctx.tool:
+            raise ValueError(f"{self._ctx.event} event missing tool_name")
 
     def get_field(self, *keys, default=None):
         """
@@ -319,16 +447,103 @@ class BaseEvent:
         Returns:
             Field value or default
         """
-        current = self.ctx.full_payload
+        current = self._ctx.full_payload
         for key in keys:
             if not isinstance(current, dict) or key not in current:
                 return default
             current = current[key]
         return current
 
+    def block(self, reason: str) -> "HookResult":
+        """Block operation with reason"""
+        return HookResult(Decision.BLOCK, reason)
+
+    def approve(self, reason: str = "") -> "HookResult":
+        """Approve operation with optional reason"""
+        return HookResult(Decision.APPROVE, reason)
+
+    def undefined(self) -> "HookResult":
+        """Let Claude Code decide (default behavior)"""
+        return HookResult(None)
+
+    # JSON output methods - upstream compatible with Python shortcuts
+    def block_json(
+        self,
+        reason: str,
+        continue_: bool = True,
+        stopReason: str = "",  # noqa: N803
+        stop_reason: str = "",
+    ) -> "JsonResult":
+        """Block with JSON output"""
+        return JsonResult(
+            decision=Decision.BLOCK,
+            reason=reason,
+            continue_=continue_,
+            stopReason=stopReason,
+            stop_reason=stop_reason,
+        )
+
+    def approve_json(
+        self,
+        reason: str = "",
+        suppressOutput: bool = False,  # noqa: N803
+        suppress_output: bool = False,
+    ) -> "JsonResult":
+        """Approve with JSON output"""
+        return JsonResult(
+            decision=Decision.APPROVE,
+            reason=reason,
+            suppressOutput=suppressOutput,
+            suppress_output=suppress_output,
+        )
+
+    def undefined_json(
+        self,
+        suppressOutput: bool = False,  # noqa: N803
+        suppress_output: bool = False,
+    ) -> "JsonResult":
+        """Let Claude Code decide with JSON output"""
+        return JsonResult(
+            decision=None,
+            suppressOutput=suppressOutput,
+            suppress_output=suppress_output,
+        )
+
+    def stop_claude(
+        self,
+        stopReason: str = "",  # noqa: N803
+        stop_reason: str = "",
+    ) -> "JsonResult":
+        """Stop Claude from continuing"""
+        return JsonResult(
+            continue_=False,
+            stopReason=stopReason,
+            stop_reason=stop_reason,
+        )
+
+    @property
+    def hook_event_name(self) -> str:
+        """The upstream hook event name (e.g., 'PreToolUse', 'PostToolUse')"""
+        return self._ctx.event
+
+    @property
+    def name(self) -> str:
+        """Shortcut for hook_event_name"""
+        return self._ctx.event
+
+    @property
+    def transcript_path(self) -> str | None:
+        """Path to the conversation transcript"""
+        return self.get_field("transcript_path")
+
+    @property
+    def session_id(self) -> str | None:
+        """Session ID for this event"""
+        return self.get_field("session_id")
+
 
 class Notification(BaseEvent):
-    """Helper for Notification events"""
+    """Helper for Notification events - only supports undefined behavior"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -339,16 +554,33 @@ class Notification(BaseEvent):
         return self.get_field("message")
 
     @property
-    def session_id(self) -> str | None:
-        return self.get_field("session_id")
-
-    @property
-    def transcript_path(self) -> str | None:
-        return self.get_field("transcript_path")
-
-    @property
     def has_message(self) -> bool:
         return bool(self.message)
+
+    # Override to only allow undefined - Notification hooks don't support decisions
+    def block(self, reason: str) -> "HookResult":
+        """Not supported for Notification hooks"""
+        raise NotImplementedError(
+            "Notification hooks don't support block() - use undefined() or just return None"
+        )
+
+    def approve(self, reason: str = "") -> "HookResult":
+        """Not supported for Notification hooks"""
+        raise NotImplementedError(
+            "Notification hooks don't support approve() - use undefined() or just return None"
+        )
+
+    def block_json(self, reason: str, **kwargs) -> "JsonResult":
+        """Not supported for Notification hooks"""
+        raise NotImplementedError(
+            "Notification hooks don't support block_json() - use undefined_json() or just return None"
+        )
+
+    def approve_json(self, reason: str = "", **kwargs) -> "JsonResult":
+        """Not supported for Notification hooks"""
+        raise NotImplementedError(
+            "Notification hooks don't support approve_json() - use undefined_json() or just return None"
+        )
 
 
 class ToolEvent(BaseEvent):
@@ -360,19 +592,12 @@ class ToolEvent(BaseEvent):
 
     @property
     def tool_name(self) -> str:
-        return self.ctx.tool
+        return self._ctx.tool
 
     @property
     def tool_input(self) -> dict[str, Any]:
-        return self.ctx.input
-
-    @property
-    def session_id(self) -> str | None:
-        return self.get_field("session_id")
-
-    def get_input(self, key: str, default=None):
-        """Get specific tool input parameter"""
-        return self.tool_input.get(key, default)
+        """Tool input parameters"""
+        return self.get_field("tool_input", default={})
 
 
 class PreToolUse(ToolEvent):
@@ -384,62 +609,135 @@ class PreToolUse(ToolEvent):
 
 
 class PostToolUse(ToolEvent):
-    """Helper for PostToolUse events (after tool execution)"""
+    """Helper for PostToolUse events (after tool execution) - supports block, undefined"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
         self._validate_event("PostToolUse")
-        if self.ctx.response is None:
+        if self._ctx.response is None:
             raise ValueError("PostToolUse event missing tool_response")
 
     @property
     def tool_response(self) -> dict[str, Any]:
-        return self.ctx.response
+        """Tool response data"""
+        return self._ctx.response
 
-    def get_response(self, key: str, default=None):
-        """Get specific field from tool response"""
-        return self.tool_response.get(key, default)
+    # Override to only allow block and undefined - PostToolUse doesn't support approve
+    def approve(self, reason: str = "") -> "HookResult":
+        """Not supported for PostToolUse hooks"""
+        raise NotImplementedError(
+            "PostToolUse hooks don't support approve() - only block() and undefined()"
+        )
+
+    def approve_json(self, reason: str = "", **kwargs) -> "JsonResult":
+        """Not supported for PostToolUse hooks"""
+        raise NotImplementedError(
+            "PostToolUse hooks don't support approve_json() - only block_json() and undefined()"
+        )
 
 
 class Stop(BaseEvent):
-    """Helper for Stop events (when Claude finishes)"""
+    """Helper for Stop events (when Claude finishes) - supports block, undefined"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
         self._validate_event("Stop")
 
     @property
-    def session_id(self) -> str | None:
-        return self.get_field("session_id")
+    def stop_hook_active(self) -> bool:
+        """True when Claude Code is already continuing as a result of a stop hook"""
+        return self.get_field("stop_hook_active", default=False)
 
-    @property
-    def transcript_path(self) -> str | None:
-        return self.get_field("transcript_path")
+    # Override to only allow block and undefined - Stop doesn't support approve
+    def approve(self, reason: str = "") -> "HookResult":
+        """Not supported for Stop hooks"""
+        raise NotImplementedError(
+            "Stop hooks don't support approve() - only block() and undefined()"
+        )
+
+    def approve_json(self, reason: str = "", **kwargs) -> "JsonResult":
+        """Not supported for Stop hooks"""
+        raise NotImplementedError(
+            "Stop hooks don't support approve_json() - only block_json() and undefined()"
+        )
 
 
 class SubagentStop(BaseEvent):
-    """Helper for SubagentStop events (when Claude subagent stops)"""
+    """Helper for SubagentStop events (when Claude subagent stops) - supports block, undefined"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
         self._validate_event("SubagentStop")
 
     @property
-    def session_id(self) -> str | None:
-        return self.get_field("session_id")
+    def stop_hook_active(self) -> bool:
+        """True when Claude Code is already continuing as a result of a stop hook"""
+        return self.get_field("stop_hook_active", default=False)
+
+    # Override to only allow block and undefined - SubagentStop doesn't support approve
+    def approve(self, reason: str = "") -> "HookResult":
+        """Not supported for SubagentStop hooks"""
+        raise NotImplementedError(
+            "SubagentStop hooks don't support approve() - only block() and undefined()"
+        )
+
+    def approve_json(self, reason: str = "", **kwargs) -> "JsonResult":
+        """Not supported for SubagentStop hooks"""
+        raise NotImplementedError(
+            "SubagentStop hooks don't support approve_json() - only block_json() and undefined()"
+        )
+
+
+class PreCompact(BaseEvent):
+    """Helper for PreCompact events (before conversation compaction) - only supports undefined behavior"""
+
+    def validate_required_fields(self):
+        super().validate_required_fields()
+        self._validate_event("PreCompact")
 
     @property
-    def transcript_path(self) -> str | None:
-        return self.get_field("transcript_path")
+    def trigger(self) -> str | None:
+        """Trigger type ('manual' or 'auto')"""
+        return self.get_field("trigger")
+
+    @property
+    def custom_instructions(self) -> str | None:
+        """Custom instructions for compaction (from user input in manual mode)"""
+        return self.get_field("custom_instructions")
+
+    # Override to only allow undefined - PreCompact hooks don't support decisions
+    def block(self, reason: str) -> "HookResult":
+        """Not supported for PreCompact hooks"""
+        raise NotImplementedError(
+            "PreCompact hooks don't support block() - only undefined()"
+        )
+
+    def approve(self, reason: str = "") -> "HookResult":
+        """Not supported for PreCompact hooks"""
+        raise NotImplementedError(
+            "PreCompact hooks don't support approve() - only undefined()"
+        )
+
+    def block_json(self, reason: str, **kwargs) -> "JsonResult":
+        """Not supported for PreCompact hooks"""
+        raise NotImplementedError(
+            "PreCompact hooks don't support block_json() - only undefined()"
+        )
+
+    def approve_json(self, reason: str = "", **kwargs) -> "JsonResult":
+        """Not supported for PreCompact hooks"""
+        raise NotImplementedError(
+            "PreCompact hooks don't support approve_json() - only undefined()"
+        )
 
 
 # Event factory function
-def create_event(ctx: HookContext) -> BaseEvent:
+def create_event(ctx: EventContext) -> BaseEvent:
     """
     Create appropriate event instance based on event type
 
     Args:
-        ctx: Hook context
+        ctx: Event context
 
     Returns:
         Event-specific helper instance
@@ -450,6 +748,7 @@ def create_event(ctx: HookContext) -> BaseEvent:
         "PostToolUse": PostToolUse,
         "Stop": Stop,
         "SubagentStop": SubagentStop,
+        "PreCompact": PreCompact,
     }
 
     event_class = event_classes.get(ctx.event)
@@ -474,9 +773,64 @@ def approve(reason: str = "") -> "HookResult":
     return HookResult(Decision.APPROVE, reason)
 
 
-def neutral() -> "HookResult":
+def undefined() -> "HookResult":
     """Let Claude Code decide (default behavior)"""
-    return HookResult(Decision.NEUTRAL)
+    return HookResult(None)
+
+
+# JSON convenience functions
+def block_json(
+    reason: str,
+    continue_: bool = True,
+    stopReason: str = "",  # noqa: N803
+    stop_reason: str = "",
+) -> "JsonResult":
+    """Block operation with JSON output"""
+    return JsonResult(
+        decision=Decision.BLOCK,
+        reason=reason,
+        continue_=continue_,
+        stopReason=stopReason,
+        stop_reason=stop_reason,
+    )
+
+
+def approve_json(
+    reason: str = "",
+    suppressOutput: bool = False,  # noqa: N803
+    suppress_output: bool = False,
+) -> "JsonResult":
+    """Approve operation with JSON output"""
+    return JsonResult(
+        decision=Decision.APPROVE,
+        reason=reason,
+        suppressOutput=suppressOutput,
+        suppress_output=suppress_output,
+    )
+
+
+def undefined_json(
+    suppressOutput: bool = False,  # noqa: N803
+    suppress_output: bool = False,
+) -> "JsonResult":
+    """Let Claude Code decide with JSON output"""
+    return JsonResult(
+        decision=None,
+        suppressOutput=suppressOutput,
+        suppress_output=suppress_output,
+    )
+
+
+def stop_claude(
+    stopReason: str = "",  # noqa: N803
+    stop_reason: str = "",
+) -> "JsonResult":
+    """Stop Claude from continuing"""
+    return JsonResult(
+        continue_=False,
+        stopReason=stopReason,
+        stop_reason=stop_reason,
+    )
 
 
 # ============================================================================

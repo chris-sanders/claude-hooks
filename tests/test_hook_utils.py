@@ -11,7 +11,8 @@ import sys
 import pytest
 
 from claude_hooks.hook_utils import (
-    HookContext,
+    EventContext,
+    JsonResult,
     Notification,
     PostToolUse,
     PreToolUse,
@@ -20,7 +21,7 @@ from claude_hooks.hook_utils import (
     approve,
     block,
     create_event,
-    neutral,
+    undefined,
 )
 
 
@@ -33,12 +34,12 @@ class TestHookFrameworkIntegration:
         hook_content = """
 import json
 import sys
-from claude_hooks.hook_utils import HookContext, run_hooks, neutral, block
+from claude_hooks.hook_utils import run_hooks
 
-def test_hook(ctx: HookContext):
-    if ctx.tool == "Bash" and "dangerous" in ctx.input.get("command", ""):
-        return block("Blocked dangerous command")
-    return neutral()
+def test_hook(event):
+    if event.tool_name == "Bash" and "dangerous" in event.tool_input.get("command", ""):
+        return event.block("Blocked dangerous command")
+    return event.undefined()
 
 if __name__ == "__main__":
     run_hooks(test_hook)
@@ -51,7 +52,7 @@ if __name__ == "__main__":
         safe_payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "input": {"command": "echo hello"},
+            "tool_input": {"command": "echo hello"},
             "tool_response": None,
         }
 
@@ -69,7 +70,7 @@ if __name__ == "__main__":
         dangerous_payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "input": {"command": "rm dangerous file"},
+            "tool_input": {"command": "rm dangerous file"},
             "tool_response": None,
         }
 
@@ -89,15 +90,15 @@ if __name__ == "__main__":
         hook_content = """
 import json
 import sys
-from claude_hooks.hook_utils import HookContext, run_hooks, neutral, block
+from claude_hooks.hook_utils import run_hooks
 
-def hook1(ctx: HookContext):
-    return neutral()
+def hook1(event):
+    return event.undefined()
 
-def hook2(ctx: HookContext):
-    if ctx.tool == "Bash" and "block" in ctx.input.get("command", ""):
-        return block("Hook 2 blocked")
-    return neutral()
+def hook2(event):
+    if event.tool_name == "Bash" and "block" in event.tool_input.get("command", ""):
+        return event.block("Hook 2 blocked")
+    return event.undefined()
 
 if __name__ == "__main__":
     run_hooks([hook1, hook2])
@@ -110,7 +111,7 @@ if __name__ == "__main__":
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "input": {"command": "block this command"},
+            "tool_input": {"command": "block this command"},
             "tool_response": None,
         }
 
@@ -128,10 +129,10 @@ if __name__ == "__main__":
     def test_hook_with_invalid_payload_fails_gracefully(self, tmp_path):
         """Test hooks handle invalid payloads gracefully."""
         hook_content = """
-from claude_hooks.hook_utils import HookContext, run_hooks, neutral
+from claude_hooks.hook_utils import run_hooks
 
-def test_hook(ctx: HookContext):
-    return neutral()
+def test_hook(event):
+    return event.undefined()
 
 if __name__ == "__main__":
     run_hooks(test_hook)
@@ -141,7 +142,7 @@ if __name__ == "__main__":
         hook_file.write_text(hook_content)
 
         # Missing required hook_event_name
-        invalid_payload = {"tool_name": "Bash", "input": {"command": "echo test"}}
+        invalid_payload = {"tool_name": "Bash", "tool_input": {"command": "echo test"}}
 
         result = subprocess.run(
             [sys.executable, str(hook_file)],
@@ -156,9 +157,9 @@ if __name__ == "__main__":
     def test_hook_exception_handling(self, tmp_path):
         """Test that hook exceptions are handled properly."""
         hook_content = """
-from claude_hooks.hook_utils import HookContext, run_hooks
+from claude_hooks.hook_utils import run_hooks
 
-def failing_hook(ctx: HookContext):
+def failing_hook(event):
     raise ValueError("Hook intentionally failed")
 
 if __name__ == "__main__":
@@ -171,7 +172,7 @@ if __name__ == "__main__":
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "input": {"command": "echo test"},
+            "tool_input": {"command": "echo test"},
             "tool_response": None,
         }
 
@@ -199,7 +200,7 @@ class TestHookClasses:
             "transcript_path": "/tmp/transcript.txt",
         }
 
-        ctx = HookContext(
+        ctx = EventContext(
             event="Notification",
             tool=None,
             input=payload,
@@ -218,7 +219,7 @@ class TestHookClasses:
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Edit",
-            "input": {
+            "tool_input": {
                 "file_path": "/secure/config.py",
                 "old_string": "debug=False",
                 "new_string": "debug=True",
@@ -226,26 +227,26 @@ class TestHookClasses:
             "session_id": "session-456",
         }
 
-        ctx = HookContext(
+        ctx = EventContext(
             event="PreToolUse",
             tool="Edit",
-            input=payload["input"],
+            input=payload["tool_input"],
             response=None,
             full_payload=payload,
         )
 
         event = PreToolUse(ctx)
         assert event.tool_name == "Edit"
-        assert event.get_input("file_path") == "/secure/config.py"
-        assert event.get_input("old_string") == "debug=False"
-        assert event.get_input("nonexistent", "default") == "default"
+        assert event.tool_input.get("file_path") == "/secure/config.py"
+        assert event.tool_input.get("old_string") == "debug=False"
+        assert event.tool_input.get("nonexistent", "default") == "default"
 
     def test_post_tool_use_hook_real_usage(self):
         """Test PostToolUseHook with realistic tool response data."""
         payload = {
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",
-            "input": {"command": "ls -la /tmp"},
+            "tool_input": {"command": "ls -la /tmp"},
             "tool_response": {
                 "output": "total 16\ndrwxr-xr-x file1.txt\ndrwxr-xr-x file2.txt\n",
                 "error": "",
@@ -254,19 +255,19 @@ class TestHookClasses:
             "session_id": "session-789",
         }
 
-        ctx = HookContext(
+        ctx = EventContext(
             event="PostToolUse",
             tool="Bash",
-            input=payload["input"],
+            input=payload["tool_input"],
             response=payload["tool_response"],
             full_payload=payload,
         )
 
         event = PostToolUse(ctx)
         assert event.tool_name == "Bash"
-        assert "file1.txt" in event.get_response("output")
-        assert event.get_response("exit_code") == 0
-        assert event.get_response("nonexistent", "default") == "default"
+        assert "file1.txt" in event.tool_response.get("output")
+        assert event.tool_response.get("exit_code") == 0
+        assert event.tool_response.get("nonexistent", "default") == "default"
 
     def test_stop_hook_real_usage(self):
         """Test StopHook with realistic conversation end data."""
@@ -277,7 +278,7 @@ class TestHookClasses:
             "duration": 1800,
         }
 
-        ctx = HookContext(
+        ctx = EventContext(
             event="Stop", tool=None, input=payload, response=None, full_payload=payload
         )
 
@@ -294,7 +295,7 @@ class TestHookClasses:
             "parent_session": "main-session-123",
         }
 
-        ctx = HookContext(
+        ctx = EventContext(
             event="SubagentStop",
             tool=None,
             input=payload,
@@ -317,7 +318,7 @@ class TestHookClasses:
         ]
 
         for event_name, expected_class in test_cases:
-            ctx = HookContext(
+            ctx = EventContext(
                 event=event_name,
                 tool="TestTool" if "Tool" in event_name else None,
                 input={"test": "data"},
@@ -330,7 +331,7 @@ class TestHookClasses:
 
     def test_create_hook_with_unknown_event_fails(self):
         """Test create_hook fails gracefully with unknown events."""
-        ctx = HookContext(
+        ctx = EventContext(
             event="UnknownEvent", tool=None, input={}, response=None, full_payload={}
         )
 
@@ -353,10 +354,224 @@ class TestConvenienceFunctions:
         assert approve_result.decision.value == "approve"
         assert approve_result.reason == "Command validated"
 
-        # Test neutral
-        neutral_result = neutral()
-        assert neutral_result.decision.value is None
-        assert neutral_result.reason == ""
+        # Test undefined
+        undefined_result = undefined()
+        assert undefined_result.decision is None
+        assert undefined_result.reason == ""
+
+
+class TestJsonOutput:
+    """Test JSON output functionality with upstream compatibility."""
+
+    def test_json_result_creation_with_upstream_naming(self):
+        """Test JsonResult creation with upstream field names."""
+        result = JsonResult(
+            decision=None,
+            reason="test reason",
+            continue_=False,
+            stopReason="Manual review required",
+            suppressOutput=True,
+        )
+
+        assert result.decision is None
+        assert result.reason == "test reason"
+        assert result.continue_ is False
+        assert result.stopReason == "Manual review required"
+        assert result.suppressOutput is True
+
+    def test_json_result_creation_with_python_shortcuts(self):
+        """Test JsonResult creation with Python-style shortcuts."""
+        result = JsonResult(
+            decision=None,
+            reason="test reason",
+            continue_=False,
+            stop_reason="Manual review required",
+            suppress_output=True,
+        )
+
+        assert result.decision is None
+        assert result.reason == "test reason"
+        assert result.continue_ is False
+        assert result.stopReason == "Manual review required"  # Should use shortcut
+        assert result.suppressOutput is True  # Should use shortcut
+
+    def test_json_result_shortcuts_override_upstream(self):
+        """Test that Python shortcuts override upstream naming when both provided."""
+        result = JsonResult(
+            stopReason="upstream",
+            stop_reason="shortcut",
+            suppressOutput=False,
+            suppress_output=True,
+        )
+
+        assert result.stopReason == "shortcut"  # Shortcut wins
+        assert result.suppressOutput is True  # Shortcut wins
+
+    def test_json_output_methods_on_base_event(self):
+        """Test JSON output methods on BaseEvent."""
+        ctx = EventContext(
+            event="PreToolUse",
+            tool="TestTool",
+            input={"test": "data"},
+            response=None,
+            full_payload={"hook_event_name": "PreToolUse"},
+        )
+
+        event = create_event(ctx)
+
+        # Test block_json
+        result = event.block_json("Access denied")
+        assert isinstance(result, JsonResult)
+        assert result.decision.value == "block"
+        assert result.reason == "Access denied"
+
+        # Test approve_json with upstream naming
+        result = event.approve_json("Access granted", suppressOutput=True)
+        assert isinstance(result, JsonResult)
+        assert result.decision.value == "approve"
+        assert result.suppressOutput is True
+
+        # Test approve_json with Python shortcuts
+        result = event.approve_json("Access granted", suppress_output=True)
+        assert isinstance(result, JsonResult)
+        assert result.suppressOutput is True
+
+        # Test undefined_json
+        result = event.undefined_json()
+        assert isinstance(result, JsonResult)
+        assert result.decision is None
+
+        # Test stop_claude with upstream naming
+        result = event.stop_claude(stopReason="Review required")
+        assert isinstance(result, JsonResult)
+        assert result.continue_ is False
+        assert result.stopReason == "Review required"
+
+        # Test stop_claude with Python shortcuts
+        result = event.stop_claude(stop_reason="Review required")
+        assert isinstance(result, JsonResult)
+        assert result.continue_ is False
+        assert result.stopReason == "Review required"
+
+    def test_json_hook_execution_with_block(self, tmp_path):
+        """Test JSON hook execution that blocks operation."""
+        hook_content = """
+import json
+from claude_hooks.hook_utils import run_hooks
+
+def json_hook(event):
+    if event.tool_name == "Bash" and "dangerous" in event.tool_input.get("command", ""):
+        return event.block_json("Dangerous command blocked")
+    return event.undefined_json()
+
+if __name__ == "__main__":
+    run_hooks(json_hook)
+"""
+
+        hook_file = tmp_path / "json_hook.py"
+        hook_file.write_text(hook_content)
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "dangerous command"},
+        }
+
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0  # JSON output always exits 0
+
+        # Parse JSON output
+        json_output = json.loads(result.stdout.strip())
+        assert json_output["decision"] == "block"
+        assert json_output["reason"] == "Dangerous command blocked"
+
+    def test_json_hook_execution_with_approve_and_suppress(self, tmp_path):
+        """Test JSON hook execution that approves with suppressed output."""
+        hook_content = """
+import json
+from claude_hooks.hook_utils import run_hooks
+
+def json_hook(event):
+    if event.tool_name == "Read":
+        return event.approve_json("File access approved", suppress_output=True)
+    return event.undefined_json()
+
+if __name__ == "__main__":
+    run_hooks(json_hook)
+"""
+
+        hook_file = tmp_path / "json_hook.py"
+        hook_file.write_text(hook_content)
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/test/file.txt"},
+        }
+
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0
+
+        # Parse JSON output
+        json_output = json.loads(result.stdout.strip())
+        assert json_output["decision"] == "approve"
+        assert json_output["reason"] == "File access approved"
+        assert json_output["suppressOutput"] is True
+
+    def test_json_hook_execution_with_stop_claude(self, tmp_path):
+        """Test JSON hook execution that stops Claude."""
+        hook_content = """
+import json
+from claude_hooks.hook_utils import run_hooks
+
+def json_hook(event):
+    if "critical" in event.tool_input.get("file_path", ""):
+        return event.stop_claude("Critical file access requires manual review")
+    return event.undefined_json()
+
+if __name__ == "__main__":
+    run_hooks(json_hook)
+"""
+
+        hook_file = tmp_path / "json_hook.py"
+        hook_file.write_text(hook_content)
+
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/critical/config.json"},
+        }
+
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0
+
+        # Parse JSON output
+        json_output = json.loads(result.stdout.strip())
+        assert json_output["continue"] is False
+        assert (
+            json_output["stopReason"] == "Critical file access requires manual review"
+        )
 
 
 class TestRealWorldScenarios:
@@ -365,17 +580,15 @@ class TestRealWorldScenarios:
     def test_security_hook_blocks_sensitive_file_access(self, tmp_path):
         """Test a realistic security hook that protects sensitive files."""
         hook_content = """
-from claude_hooks.hook_utils import HookContext, PreToolUse, run_hooks, neutral, block
+from claude_hooks.hook_utils import run_hooks
 
-def security_hook(ctx: HookContext):
-    event = PreToolUse(ctx)
-
+def security_hook(event):
     if event.tool_name in ["Edit", "Write", "Read"]:
-        file_path = event.get_input("file_path", "")
+        file_path = event.tool_input.get("file_path", "")
         if any(sensitive in file_path.lower() for sensitive in [".env", "secret", "password", "key"]):
-            return block(f"Access to sensitive file blocked: {file_path}")
+            return event.block(f"Access to sensitive file blocked: {file_path}")
 
-    return neutral()
+    return event.undefined()
 
 if __name__ == "__main__":
     run_hooks(security_hook)
@@ -388,7 +601,7 @@ if __name__ == "__main__":
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Edit",
-            "input": {
+            "tool_input": {
                 "file_path": "/project/.env",
                 "old_string": "API_KEY=old",
                 "new_string": "API_KEY=new",
@@ -412,26 +625,24 @@ if __name__ == "__main__":
         log_file = tmp_path / "audit.log"
 
         hook_content = f'''
-from claude_hooks.hook_utils import HookContext, PostToolUse, run_hooks, neutral
+from claude_hooks.hook_utils import run_hooks
 import json
 from datetime import datetime
 
-def audit_hook(ctx: HookContext):
-    event = PostToolUse(ctx)
-
+def audit_hook(event):
     # Log tool usage
     log_entry = {{
         "timestamp": datetime.now().isoformat(),
         "tool": event.tool_name,
         "session": event.session_id,
         "input": dict(event.tool_input),
-        "success": event.get_response("error", "") == ""
+        "success": event.tool_response.get("error", "") == ""
     }}
 
     with open("{log_file}", "a") as f:
         f.write(json.dumps(log_entry) + "\\n")
 
-    return neutral()
+    return event.undefined()
 
 if __name__ == "__main__":
     run_hooks(audit_hook)
@@ -443,7 +654,7 @@ if __name__ == "__main__":
         payload = {
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",
-            "input": {"command": "echo test"},
+            "tool_input": {"command": "echo test"},
             "tool_response": {"output": "test", "error": ""},
             "session_id": "audit-test-123",
         }
@@ -465,3 +676,55 @@ if __name__ == "__main__":
         assert log_entry["tool"] == "Bash"
         assert log_entry["session"] == "audit-test-123"
         assert log_entry["success"] is True
+
+    def test_advanced_json_security_hook(self, tmp_path):
+        """Test advanced security hook using JSON output."""
+        hook_content = """
+from claude_hooks.hook_utils import run_hooks
+
+def advanced_security_hook(event):
+    if event.tool_name in ["Edit", "Write", "Read"]:
+        file_path = event.tool_input.get("file_path", "")
+
+        # Critical files stop Claude entirely
+        if "critical" in file_path.lower():
+            return event.stop_claude("Critical file access requires manual approval")
+
+        # Sensitive files are blocked with JSON
+        if any(sensitive in file_path.lower() for sensitive in [".env", "secret", "password", "key"]):
+            return event.block_json(f"Sensitive file access blocked: {file_path}")
+
+        # Log files are approved but suppressed from transcript
+        if file_path.endswith(".log"):
+            return event.approve_json("Log file access approved", suppress_output=True)
+
+    return event.undefined_json()
+
+if __name__ == "__main__":
+    run_hooks(advanced_security_hook)
+"""
+
+        hook_file = tmp_path / "advanced_security_hook.py"
+        hook_file.write_text(hook_content)
+
+        # Test critical file access - should stop Claude
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/critical/system.conf"},
+        }
+
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        assert result.returncode == 0
+        json_output = json.loads(result.stdout.strip())
+        assert json_output["continue"] is False
+        assert (
+            "Critical file access requires manual approval" in json_output["stopReason"]
+        )

@@ -84,7 +84,7 @@ class TestInitWorkflow:
         runner = CliRunner()
 
         result = runner.invoke(
-            main, ["init", "--dir", str(tmp_path), "--notification", "--stop"]
+            main, ["init", "notification", "stop", "--dir", str(tmp_path)]
         )
         assert result.exit_code == 0
 
@@ -125,7 +125,7 @@ class TestInitWorkflow:
             json.dump(existing_settings, f)
 
         runner = CliRunner()
-        result = runner.invoke(main, ["init", "--dir", str(tmp_path), "--pre-tool-use"])
+        result = runner.invoke(main, ["init", "pre-tool-use", "--dir", str(tmp_path)])
         assert result.exit_code == 0
 
         # Verify merge preserved existing and added new
@@ -149,7 +149,7 @@ class TestInitWorkflow:
 
         runner = CliRunner()
         result = runner.invoke(
-            main, ["init", "--dir", str(tmp_path), "--notification", "--force"]
+            main, ["init", "notification", "--dir", str(tmp_path), "--force"]
         )
         assert result.exit_code == 0
 
@@ -166,7 +166,7 @@ class TestHookExecution:
         """Test that generated notification hook actually works."""
         # Initialize notification hook
         runner = CliRunner()
-        result = runner.invoke(main, ["init", "--dir", str(tmp_path), "--notification"])
+        result = runner.invoke(main, ["init", "notification", "--dir", str(tmp_path)])
         assert result.exit_code == 0
 
         hook_file = tmp_path / "hooks" / "notification.py"
@@ -193,7 +193,7 @@ class TestHookExecution:
     def test_pre_tool_use_hook_can_block_commands(self, tmp_path):
         """Test that pre-tool-use hook can actually block dangerous commands."""
         runner = CliRunner()
-        result = runner.invoke(main, ["init", "--dir", str(tmp_path), "--pre-tool-use"])
+        result = runner.invoke(main, ["init", "pre-tool-use", "--dir", str(tmp_path)])
         assert result.exit_code == 0
 
         hook_file = tmp_path / "hooks" / "pre_tool_use.py"
@@ -202,7 +202,7 @@ class TestHookExecution:
         payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "input": {"command": "rm -rf /important/data"},
+            "tool_input": {"command": "rm -rf /important/data"},
             "session_id": "test-123",
         }
 
@@ -221,9 +221,7 @@ class TestHookExecution:
     def test_post_tool_use_hook_processes_responses(self, tmp_path):
         """Test that post-tool-use hook processes tool responses."""
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["init", "--dir", str(tmp_path), "--post-tool-use"]
-        )
+        result = runner.invoke(main, ["init", "post-tool-use", "--dir", str(tmp_path)])
         assert result.exit_code == 0
 
         hook_file = tmp_path / "hooks" / "post_tool_use.py"
@@ -231,7 +229,7 @@ class TestHookExecution:
         payload = {
             "hook_event_name": "PostToolUse",
             "tool_name": "Bash",
-            "input": {"command": "echo hello"},
+            "tool_input": {"command": "echo hello"},
             "tool_response": {"output": "hello\n", "error": ""},
             "session_id": "test-123",
         }
@@ -249,7 +247,7 @@ class TestHookExecution:
     def test_hook_handles_malformed_json_gracefully(self, tmp_path):
         """Test hooks handle malformed input gracefully."""
         runner = CliRunner()
-        result = runner.invoke(main, ["init", "--dir", str(tmp_path), "--notification"])
+        result = runner.invoke(main, ["init", "notification", "--dir", str(tmp_path)])
         assert result.exit_code == 0
 
         hook_file = tmp_path / "hooks" / "notification.py"
@@ -308,9 +306,7 @@ class TestErrorHandling:
         nested_dir = tmp_path / "deep" / "nested" / "path"
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["init", "--dir", str(nested_dir), "--notification"]
-        )
+        result = runner.invoke(main, ["init", "notification", "--dir", str(nested_dir)])
         assert result.exit_code == 0
 
         assert nested_dir.exists()
@@ -333,9 +329,7 @@ class TestCrossCompatibility:
         spaced_dir = tmp_path / "path with spaces"
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["init", "--dir", str(spaced_dir), "--notification"]
-        )
+        result = runner.invoke(main, ["init", "notification", "--dir", str(spaced_dir)])
         assert result.exit_code == 0
 
         hook_file = spaced_dir / "hooks" / "notification.py"

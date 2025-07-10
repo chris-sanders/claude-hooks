@@ -7,7 +7,7 @@ Claude Code events (PreToolUse, PostToolUse, Notification, Stop, SubagentStop).
 
 from .hook_utils import (
     Decision,
-    HookContext,
+    EventContext,
     HookResult,
     Notification,
     PostToolUse,
@@ -17,14 +17,14 @@ from .hook_utils import (
     approve,
     block,
     create_event,
-    neutral,
     run_hooks,
+    undefined,
 )
 
 __version__ = "0.1.0"
 __all__ = [
     "Decision",
-    "HookContext",
+    "EventContext",
     "HookResult",
     "Notification",
     "PostToolUse",
@@ -34,6 +34,6 @@ __all__ = [
     "approve",
     "block",
     "create_event",
-    "neutral",
     "run_hooks",
+    "undefined",
 ]
