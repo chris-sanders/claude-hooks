@@ -16,7 +16,6 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 - `uv run ruff check --fix . && uv run ruff format . && uv run pytest` - Full development check (lint + format + test)
 - `uv run pytest` - Run tests only
 - `uv run pytest -v` - Run tests with verbose output
-- `uv cache clean && uv run pytest` - Clear cache and run tests (when CLI changes aren't reflected)
 
 **Important**: Always run ruff before pytest to avoid multiple test cycles due to formatting changes. Use `--fix` to auto-fix linting issues.
 
@@ -31,10 +30,18 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 **See** `tests/README.md` for detailed testing strategy and best practices.
 
 ### CLI Commands (for testing during development)
-- `uvx --from . claude-hooks init` - Initialize all hook templates
-- `uvx --from . claude-hooks init --notification` - Initialize only notification hook
-- `uvx --from . claude-hooks init --pre-tool-use --stop` - Initialize specific hooks
-- `uvx --from . claude-hooks create notification.py` - Create single hook file
+- `uv run python -m claude_hooks.cli init` - Initialize all hook templates
+- `uv run python -m claude_hooks.cli init notification` - Initialize only notification hook
+- `uv run python -m claude_hooks.cli init pre-tool-use stop` - Initialize specific hooks
+- `uv run python -m claude_hooks.cli create notification.py` - Create single hook file
+
+**Development Note:** Use `uv run python -m claude_hooks.cli` instead of `uvx --from .` for development testing to avoid caching issues. The `uvx --from .` approach caches the built package, so code changes won't be reflected until you run `uv cache clean`.
+
+### Final Testing (packaged version)
+- `uv cache clean && uvx --from . claude-hooks init` - Test the packaged version (clears cache first)
+- `uvx --from . claude-hooks init notification` - Test specific functionality in packaged version
+
+**Note:** Only use `uvx --from .` for final testing of the packaged version before release. For development, use the direct module approach above.
 
 ### Running Development Examples
 - `uv run examples/notification.py` - Run notification hook example (development only)

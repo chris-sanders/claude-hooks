@@ -246,7 +246,7 @@ def setup_logging(hook_name: str, event_name: str | None = None) -> None:
         level = getattr(logging, log_level)
     except AttributeError:
         level = logging.INFO  # Fallback to INFO for invalid values
-    
+
     logging.basicConfig(
         level=level,
         handlers=[file_handler, stream_handler],
@@ -407,11 +407,11 @@ def _execute_hook(hook, event: "BaseEvent") -> HookResult | JsonResult:
     try:
         if not callable(hook):
             raise ValueError(f"Hook must be a callable function, got {type(hook)}")
-        
+
         # Set up logger for this hook function
         hook_name = hook.__name__ if hasattr(hook, "__name__") else "unknown_hook"
         event._logger = logging.getLogger(hook_name)
-        
+
         return hook(event)
     except Exception as e:
         raise Exception(f"Hook execution failed: {e}") from e
@@ -429,7 +429,7 @@ class BaseEvent:
         self._ctx = ctx
         self._logger = None  # Will be set by _execute_hook
         self.validate_required_fields()
-    
+
     @property
     def logger(self):
         """Logger for this hook function"""

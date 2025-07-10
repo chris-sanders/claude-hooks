@@ -193,7 +193,7 @@ class TestHookExecution:
     def test_pre_tool_use_hook_can_block_commands(self, tmp_path):
         """Test that pre-tool-use hook can actually block dangerous commands."""
         # Create a custom hook that blocks dangerous commands
-        hook_content = '''
+        hook_content = """
 from claude_hooks import run_hooks
 
 def security_hook(event):
@@ -203,8 +203,8 @@ def security_hook(event):
 
 if __name__ == "__main__":
     run_hooks(security_hook)
-'''
-        
+"""
+
         hook_file = tmp_path / "security_hook.py"
         hook_file.write_text(hook_content)
 

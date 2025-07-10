@@ -833,8 +833,8 @@ if __name__ == "__main__":
         """Test that CLAUDE_HOOKS_LOG_LEVEL environment variable controls logging level."""
         # Set DEBUG level
         monkeypatch.setenv("CLAUDE_HOOKS_LOG_LEVEL", "DEBUG")
-        
-        hook_content = '''
+
+        hook_content = """
 from claude_hooks import run_hooks
 
 def debug_function(event):
@@ -844,21 +844,21 @@ def debug_function(event):
 
 if __name__ == "__main__":
     run_hooks(debug_function)
-'''
-        
+"""
+
         hook_file = tmp_path / "debug_hook.py"
         hook_file.write_text(hook_content)
-        
+
         # Create logs directory
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir()
-        
+
         payload = {
             "hook_event_name": "Notification",
             "tool_name": None,
             "tool_input": {},
         }
-        
+
         # Run the hook
         result = subprocess.run(
             [sys.executable, str(hook_file)],
@@ -868,16 +868,16 @@ if __name__ == "__main__":
             timeout=10,
             cwd=str(tmp_path),
         )
-        
+
         assert result.returncode == 0
-        
+
         # Check that notification.log was created
         log_file = logs_dir / "notification.log"
         assert log_file.exists()
-        
+
         # Read log contents
         log_content = log_file.read_text()
-        
+
         # Verify both DEBUG and INFO messages appear
         assert "[debug_function] DEBUG: Debug message should appear" in log_content
         assert "[debug_function] INFO: Info message should appear" in log_content

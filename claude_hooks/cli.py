@@ -364,14 +364,14 @@ def init(
 
     hook_names = list(requested_hooks.keys())
     click.echo(
-        f"\\nInitialization complete! Created {len(hook_names)} hook(s): {', '.join(hook_names)}"
+        f"\nInitialization complete! Created {len(hook_names)} hook(s): {', '.join(hook_names)}"
     )
-    click.echo("\\nNext steps:")
+    click.echo("\nNext steps:")
     click.echo("1. Edit the hook files to customize your logic")
     click.echo(f"2. Configure Claude Code to use {settings_filename}")
     click.echo("3. Test your hooks with Claude Code")
     click.echo(
-        "\\nNote: The logs/ directory will be created automatically when hooks run."
+        "\nNote: The logs/ directory will be created automatically when hooks run."
     )
 
 
