@@ -1,0 +1,12 @@
+[project]
+name = "claude-hooks"
+version = "0.1.0"
+description = "Simple utilities for handling claude code hooks with python"
+requires-python = ">=3.12"
+dependencies = [ ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black>=25.1.0",
+]
