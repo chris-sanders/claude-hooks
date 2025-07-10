@@ -27,9 +27,16 @@ class TestInitWorkflow:
         # Verify directory structure
         hooks_dir = tmp_path / "hooks"
         settings_file = tmp_path / "settings.json"
+        pyproject_file = hooks_dir / "pyproject.toml"
 
         assert hooks_dir.exists() and hooks_dir.is_dir()
         assert settings_file.exists()
+        assert pyproject_file.exists()
+
+        # Verify pyproject.toml contains claude-hooks dependency
+        pyproject_content = pyproject_file.read_text()
+        assert "[project]" in pyproject_content
+        assert "claude-hooks" in pyproject_content
 
         # Verify all expected hook files exist and are executable Python
         expected_hooks = [
@@ -137,6 +144,39 @@ class TestInitWorkflow:
         assert (
             merged["hooks"]["PreToolUse"][0]["matcher"] == "custom"
         )  # Original preserved
+
+    def test_init_creates_pyproject_toml_with_dependency(self, tmp_path):
+        """Test that init creates pyproject.toml with claude-hooks dependency."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", "notification", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+
+        # Verify pyproject.toml creation
+        pyproject_file = tmp_path / "hooks" / "pyproject.toml"
+        assert pyproject_file.exists()
+
+        content = pyproject_file.read_text()
+        assert "[project]" in content
+        assert '"claude-hooks"' in content
+        assert "dependencies" in content
+
+    def test_init_skips_existing_pyproject_toml(self, tmp_path):
+        """Test that init doesn't overwrite existing pyproject.toml."""
+        hooks_dir = tmp_path / "hooks"
+        hooks_dir.mkdir()
+
+        # Create existing pyproject.toml
+        existing_pyproject = hooks_dir / "pyproject.toml"
+        existing_content = "[project]\nname = 'existing'"
+        existing_pyproject.write_text(existing_content)
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", "notification", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+
+        # Verify existing content preserved
+        assert existing_pyproject.read_text() == existing_content
+        assert "Skipping pyproject.toml" in result.output
 
     def test_init_force_overwrites_existing(self, tmp_path):
         """Test --force flag overwrites existing files."""

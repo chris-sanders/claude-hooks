@@ -302,6 +302,20 @@ def init(
     hooks_dir = target_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
 
+    # Create pyproject.toml in hooks directory to ensure claude-hooks dependency is available
+    pyproject_path = hooks_dir / "pyproject.toml"
+    if not pyproject_path.exists():
+        pyproject_content = """[project]
+name = "claude-hooks-config"
+dependencies = [
+    "claude-hooks",
+]
+"""
+        pyproject_path.write_text(pyproject_content)
+        click.echo(f"Created: {pyproject_path}")
+    else:
+        click.echo("Skipping pyproject.toml (already exists)")
+
     # Create hook template files in hooks subdirectory
     for filename, content in requested_hooks.items():
         file_path = hooks_dir / filename
