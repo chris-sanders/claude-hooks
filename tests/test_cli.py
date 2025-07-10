@@ -192,11 +192,21 @@ class TestHookExecution:
 
     def test_pre_tool_use_hook_can_block_commands(self, tmp_path):
         """Test that pre-tool-use hook can actually block dangerous commands."""
-        runner = CliRunner()
-        result = runner.invoke(main, ["init", "pre-tool-use", "--dir", str(tmp_path)])
-        assert result.exit_code == 0
+        # Create a custom hook that blocks dangerous commands
+        hook_content = '''
+from claude_hooks import run_hooks
 
-        hook_file = tmp_path / "hooks" / "pre_tool_use.py"
+def security_hook(event):
+    if event.tool_name == "Bash" and "rm -rf" in event.tool_input.get("command", ""):
+        return event.block("Dangerous command blocked")
+    return event.undefined()
+
+if __name__ == "__main__":
+    run_hooks(security_hook)
+'''
+        
+        hook_file = tmp_path / "security_hook.py"
+        hook_file.write_text(hook_content)
 
         # Test with dangerous command that should be blocked
         payload = {

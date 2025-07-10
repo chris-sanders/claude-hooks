@@ -21,16 +21,12 @@ This hook responds to various Claude Code notifications.
 from claude_hooks import run_hooks
 
 
-def notification_hook(event):
-    """Handle notification events."""
-    # Add your notification handling logic here
-    print(f"Notification received: {event.name}")
-    # Notification hooks don't support decisions - return None for undefined behavior
+def log_event(event):
     return None
 
 
 if __name__ == "__main__":
-    run_hooks(notification_hook)
+    run_hooks(log_event)
 ''',
     "pre_tool_use.py": '''"""
 Pre-tool-use hook example for claude-hooks.
@@ -40,19 +36,12 @@ This hook can validate and potentially block tool execution.
 from claude_hooks import run_hooks
 
 
-def pre_tool_use_hook(event):
-    """Validate tool usage before execution."""
-    # Example: Block dangerous bash commands
-    if event.tool_name == "Bash":
-        command = event.tool_input.get("command", "")
-        if any(dangerous in command.lower() for dangerous in ["rm -rf", "sudo rm"]):
-            return event.block(f"Dangerous command blocked: {command}")
-
+def log_event(event):
     return event.undefined()
 
 
 if __name__ == "__main__":
-    run_hooks(pre_tool_use_hook)
+    run_hooks(log_event)
 ''',
     "post_tool_use.py": '''"""
 Post-tool-use hook example for claude-hooks.
@@ -62,20 +51,12 @@ This hook processes tool results after execution.
 from claude_hooks import run_hooks
 
 
-def post_tool_use_hook(event):
-    """Process tool results after execution."""
-    # Example: Log tool usage and optionally block on errors
-    print(f"Tool {event.tool_name} executed successfully")
-
-    # PostToolUse hooks can only block or undefined (no approve)
-    if event.tool_response.get("error"):
-        return event.block("Tool execution failed")
-
+def log_event(event):
     return event.undefined()
 
 
 if __name__ == "__main__":
-    run_hooks(post_tool_use_hook)
+    run_hooks(log_event)
 ''',
     "stop.py": '''"""
 Stop hook example for claude-hooks.
@@ -85,24 +66,12 @@ This hook runs when Claude finishes a conversation.
 from claude_hooks import run_hooks
 
 
-def stop_hook(event):
-    """Handle conversation stop events."""
-    # Example: Log conversation end, optionally prevent stopping
-    print("Claude conversation ended")
-
-    # Stop hooks can block stopping or undefined (no approve)
-    # Example: Block if stop_hook_active to prevent infinite loops
-    if event.stop_hook_active:
-        return event.undefined()  # Already continuing, don't block again
-
-    # Uncomment to prevent Claude from stopping:
-    # return event.block("Continue working on the task")
-
+def log_event(event):
     return event.undefined()
 
 
 if __name__ == "__main__":
-    run_hooks(stop_hook)
+    run_hooks(log_event)
 ''',
     "subagent_stop.py": '''"""
 Subagent stop hook example for claude-hooks.
@@ -112,16 +81,12 @@ This hook runs when a Claude subagent stops.
 from claude_hooks import run_hooks
 
 
-def subagent_stop_hook(event):
-    """Handle subagent stop events."""
-    # Example: Log subagent completion
-    print("Claude subagent stopped")
-
+def log_event(event):
     return event.undefined()
 
 
 if __name__ == "__main__":
-    run_hooks(subagent_stop_hook)
+    run_hooks(log_event)
 ''',
     "pre_compact.py": '''"""
 Pre-compact hook example for claude-hooks.
@@ -131,17 +96,12 @@ This hook runs before conversation compaction.
 from claude_hooks import run_hooks
 
 
-def pre_compact_hook(event):
-    """Handle pre-compaction events."""
-    # Example: Log before compaction
-    print("Conversation about to be compacted")
-    
-    # PreCompact hooks only support undefined behavior - no blocking or approving
+def log_event(event):
     return event.undefined()
 
 
 if __name__ == "__main__":
-    run_hooks(pre_compact_hook)
+    run_hooks(log_event)
 ''',
 }
 
@@ -250,7 +210,14 @@ def merge_settings(
     "hook_types",
     nargs=-1,
     type=click.Choice(
-        ["notification", "pre-tool-use", "post-tool-use", "stop", "subagent-stop", "pre-compact"]
+        [
+            "notification",
+            "pre-tool-use",
+            "post-tool-use",
+            "stop",
+            "subagent-stop",
+            "pre-compact",
+        ]
     ),
 )
 @click.option(
@@ -569,7 +536,14 @@ def run_hook_test(
 @click.argument(
     "event_type",
     type=click.Choice(
-        ["notification", "pre-tool-use", "post-tool-use", "stop", "subagent-stop", "pre-compact"]
+        [
+            "notification",
+            "pre-tool-use",
+            "post-tool-use",
+            "stop",
+            "subagent-stop",
+            "pre-compact",
+        ]
     ),
 )
 @click.option("--message", help="Message for notification events")

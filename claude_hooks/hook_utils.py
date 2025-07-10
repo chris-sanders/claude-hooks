@@ -56,6 +56,7 @@ return event.block_json("reason", stop_reason="Manual review required")
 import json
 import logging
 import logging.handlers
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -207,28 +208,19 @@ class JsonResult:
 
 def setup_logging(hook_name: str, event_name: str | None = None) -> None:
     """Setup logging for a specific hook"""
-    import inspect
 
-    # Get the caller's file path to determine log directory
-    caller_frame = inspect.currentframe().f_back
-    caller_file = caller_frame.f_globals.get("__file__")
-
-    if caller_file:
-        # Create logs directory relative to the hook file
-        hook_dir = Path(caller_file).parent
-        log_dir = hook_dir / "logs"
-    else:
-        # Fallback to current directory
-        log_dir = Path("logs")
+    # Create logs directory in current working directory
+    # This ensures logs go where the hook is being executed from
+    log_dir = Path.cwd() / "logs"
 
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Clear any existing handlers to avoid duplicates
     logging.getLogger().handlers.clear()
 
-    # Create log filename based on event and function name
-    if event_name and event_name.lower() != hook_name.lower():
-        log_filename = f"{event_name.lower()}_{hook_name}.log"
+    # Create log filename based on event name
+    if event_name:
+        log_filename = f"{event_name.lower()}.log"
     else:
         log_filename = f"{hook_name}.log"
 
@@ -243,9 +235,20 @@ def setup_logging(hook_name: str, event_name: str | None = None) -> None:
     # Create stream handler
     stream_handler = logging.StreamHandler(sys.stderr)
 
+    # Create formatter that uses the logger name instead of fixed hook_name
+    formatter = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+    file_handler.setFormatter(formatter)
+    stream_handler.setFormatter(formatter)
+
+    # Determine logging level from environment variable
+    log_level = os.getenv("CLAUDE_HOOKS_LOG_LEVEL", "INFO").upper()
+    try:
+        level = getattr(logging, log_level)
+    except AttributeError:
+        level = logging.INFO  # Fallback to INFO for invalid values
+    
     logging.basicConfig(
-        level=logging.INFO,
-        format=f"%(asctime)s [{hook_name}] %(levelname)s: %(message)s",
+        level=level,
         handlers=[file_handler, stream_handler],
         force=True,  # Clear any existing handlers
     )
@@ -281,18 +284,15 @@ def run_command(command: list, timeout: int = 30) -> tuple[bool, str, str]:
 # ============================================================================
 
 
-def run_hooks(hooks) -> None:
+def run_hooks(*hooks) -> None:
     """
     Run single or multiple hook functions with parallel execution support
 
     Args:
-        hooks: Either:
-               - A single hook function: (event: BaseEvent) -> HookResult
-               - A list of hook functions
+        *hooks: Hook functions: (event: BaseEvent) -> HookResult
     """
-    # Handle single hook case
-    if not isinstance(hooks, list):
-        hooks = [hooks]  # Convert to list for unified handling
+    # Convert to list for unified handling
+    hooks = list(hooks)
 
     # Validate input
     if not hooks:
@@ -314,8 +314,11 @@ def run_hooks(hooks) -> None:
         ctx = EventContext.from_stdin()
         event = create_event(ctx)
         setup_logging(hook_name, ctx.event)
-        logging.info(f"Running {len(hooks)} hooks for {ctx.event} on {ctx.tool}")
-        logging.info(f"Raw payload: {json.dumps(ctx.full_payload, indent=2)}")
+        framework_logger = logging.getLogger("hook_utils")
+        framework_logger.info(
+            f"Running {len(hooks)} hooks for {ctx.event} on {ctx.tool}"
+        )
+        framework_logger.info(f"Raw payload: {json.dumps(ctx.full_payload, indent=2)}")
 
         # Run hooks in parallel
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -355,15 +358,15 @@ def run_hooks(hooks) -> None:
                     # Handle JsonResult - always exits immediately
                     if isinstance(result, JsonResult):
                         if result.decision == Decision.BLOCK:
-                            logging.info(
+                            framework_logger.info(
                                 f"Hook {hook_name_individual} blocked operation (JSON)"
                             )
                         elif result.decision == Decision.APPROVE:
-                            logging.info(
+                            framework_logger.info(
                                 f"Hook {hook_name_individual} approved operation (JSON)"
                             )
                         else:
-                            logging.info(
+                            framework_logger.info(
                                 f"Hook {hook_name_individual} returned JSON result"
                             )
                         result.exit_with_result()
@@ -371,12 +374,12 @@ def run_hooks(hooks) -> None:
                     # Handle HookResult - traditional behavior
                     elif isinstance(result, HookResult):
                         if result.decision == Decision.BLOCK:
-                            logging.info(
+                            framework_logger.info(
                                 f"Hook {hook_name_individual} blocked operation"
                             )
                             result.exit_with_result()
                         elif result.decision == Decision.APPROVE:
-                            logging.info(
+                            framework_logger.info(
                                 f"Hook {hook_name_individual} approved operation"
                             )
                             result.exit_with_result()
@@ -388,14 +391,14 @@ def run_hooks(hooks) -> None:
                     sys.exit(2)
 
         # All hooks passed
-        logging.info(f"All {len(hooks)} hooks completed successfully")
+        framework_logger.info(f"All {len(hooks)} hooks completed successfully")
         sys.exit(0)
 
     except KeyboardInterrupt:
-        logging.info("Hooks interrupted by user")
+        framework_logger.info("Hooks interrupted by user")
         sys.exit(1)
     except Exception as e:
-        logging.error(f"Hooks failed: {e}")
+        framework_logger.error(f"Hooks failed: {e}")
         sys.exit(1)
 
 
@@ -404,6 +407,11 @@ def _execute_hook(hook, event: "BaseEvent") -> HookResult | JsonResult:
     try:
         if not callable(hook):
             raise ValueError(f"Hook must be a callable function, got {type(hook)}")
+        
+        # Set up logger for this hook function
+        hook_name = hook.__name__ if hasattr(hook, "__name__") else "unknown_hook"
+        event._logger = logging.getLogger(hook_name)
+        
         return hook(event)
     except Exception as e:
         raise Exception(f"Hook execution failed: {e}") from e
@@ -419,7 +427,16 @@ class BaseEvent:
 
     def __init__(self, ctx: EventContext):
         self._ctx = ctx
+        self._logger = None  # Will be set by _execute_hook
         self.validate_required_fields()
+    
+    @property
+    def logger(self):
+        """Logger for this hook function"""
+        if self._logger is None:
+            # Fallback logger if not set by framework
+            self._logger = logging.getLogger("unknown_hook")
+        return self._logger
 
     def validate_required_fields(self):
         """Override in subclasses to validate event-specific requirements"""

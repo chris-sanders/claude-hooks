@@ -15,7 +15,7 @@ A portable Python framework for writing Claude Code hooks that reduces boilerpla
 This package provides two main operations:
 
 **`uvx claude-hooks init`** - **Installs** hook templates and creates/updates `settings.json`
-- Creates template files for all hook types (or specific ones with flags)
+- Creates template files for all hook types (or specific ones with arguments)
 - Creates a new `settings.json` file or **merges** hook configurations into existing one
 - Existing `settings.json` content is preserved - only adds missing hook entries
 - Templates provide the framework structure and automatic logging setup
@@ -44,7 +44,7 @@ uvx claude-hooks create --help
 When you run `init`, this framework creates a specific folder structure:
 
 ```
-your-directory/
+.claude/
 ├── hooks/                    # All hook files go here
 │   ├── notification.py
 │   ├── pre_tool_use.py
@@ -53,15 +53,15 @@ your-directory/
 │   ├── subagent_stop.py
 │   └── pre_compact.py
 ├── logs/                     # Auto-created when hooks run
-│   ├── notification_notification_hook.log
-│   ├── pretooluse_pre_tool_use_hook.log
+│   ├── notification.log
+│   ├── pretooluse.log
 │   └── ...
 └── settings.json             # Claude Code configuration
 ```
 
 **For global hooks in `~/.claude/`:**
 - Hook files: `~/.claude/hooks/*.py` 
-- Log files: `~/.claude/logs/*.log`
+- Log files: `~/.claude/hooks/logs/*.log`
 - Settings: `~/.claude/settings.json`
 
 **For project hooks:**
@@ -184,7 +184,7 @@ def compliance_hook(event):
 
 if __name__ == "__main__":
     # All hooks run in parallel - first block wins
-    run_hooks([security_hook, audit_hook, compliance_hook])
+    run_hooks(security_hook, audit_hook, compliance_hook)
 ```
 
 ### Serial vs Parallel Execution
@@ -224,7 +224,7 @@ def compliance_hook(event):
 
 if __name__ == "__main__":
     # Both hooks run in parallel - first to block wins
-    run_hooks([security_hook, compliance_hook])
+    run_hooks(security_hook, compliance_hook)
 ```
 
 ### Hook-Specific Constraints
@@ -297,6 +297,26 @@ This framework adds developer-friendly features on top of the upstream specifica
 - **JSON**: `event.block_json()`, `event.approve_json()`, `event.undefined_json()`, `event.stop_claude()`
 - **Global**: `block()`, `approve()`, `undefined()`, `block_json()`, etc.
 
+### Automatic Logging
+All hook functions get automatic logging with no imports required:
+
+```python
+def my_hook(event):
+    event.logger.info("Hook executed successfully")
+    event.logger.debug("Detailed debug information")  
+    event.logger.warning("Something needs attention")
+    event.logger.error("An error occurred")
+    return event.undefined()
+```
+
+**Log Location**: `logs/{event_name}.log` (e.g., `notification.log`, `pretooluse.log`)  
+**Log Format**: `timestamp [function_name] LEVEL: message`
+
+**Control Log Level**: Set environment variable before starting Claude Code:
+```bash
+export CLAUDE_HOOKS_LOG_LEVEL=DEBUG  # DEBUG, INFO (default), WARNING, ERROR, CRITICAL
+claude
+```
 
 ## License
 

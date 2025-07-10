@@ -81,7 +81,30 @@ Both upstream naming (`suppressOutput`, `stopReason`) and Python-style shortcuts
 
 ### Logging
 
-All hooks automatically get rotating file logging in `logs/` directory with format `{event}_{hook_name}_hooks.log`. Logs are limited to 10MB with 5 backup files.
+All hooks automatically get rotating file logging in `logs/` directory with format `{event_name}.log` (e.g., `notification.log`, `pretooluse.log`). Logs are limited to 5MB with 5 backup files.
+
+**Automatic Logging in Hook Functions:**
+```python
+def my_hook(event):
+    event.logger.info("Hook executed successfully")
+    event.logger.debug("Detailed debug information")
+    event.logger.warning("Something needs attention")
+    event.logger.error("An error occurred")
+    return event.undefined()
+```
+
+**Controlling Log Level:**
+Set the `CLAUDE_HOOKS_LOG_LEVEL` environment variable before starting Claude Code:
+```bash
+# Enable debug logging
+export CLAUDE_HOOKS_LOG_LEVEL=DEBUG
+claude --chat
+
+# Or for a single session
+CLAUDE_HOOKS_LOG_LEVEL=DEBUG claude --chat
+```
+
+Available levels: `DEBUG`, `INFO` (default), `WARNING`, `ERROR`, `CRITICAL`
 
 ## Development Philosophy
 
@@ -106,6 +129,9 @@ All hooks automatically get rotating file logging in `logs/` directory with form
 from hook_utils import run_hooks
 
 def my_hook(event):
+    # Logging is automatic - just use event.logger
+    event.logger.info("Processing hook event")
+    
     # Your hook logic here
     return event.neutral()  # or event.block("reason") or event.approve("reason")
 
@@ -119,8 +145,11 @@ if __name__ == "__main__":
 from hook_utils import run_hooks
 
 def advanced_hook(event):
+    event.logger.info(f"Processing {event.tool_name} tool")
+    
     # Block with JSON output
     if event.tool_name == "Bash" and "rm -rf" in event.tool_input.get("command", ""):
+        event.logger.warning("Blocking dangerous command")
         return event.block_json("Dangerous command blocked")
     
     # Approve with suppressed output (upstream naming)
@@ -133,6 +162,7 @@ def advanced_hook(event):
     
     # Stop Claude from continuing
     if "critical" in event.tool_input.get("file_path", ""):
+        event.logger.error("Critical file access detected")
         return event.stop_claude("Critical file access requires manual review")
     
     return event.neutral_json()
@@ -147,9 +177,12 @@ if __name__ == "__main__":
 from hook_utils import run_hooks
 
 def my_pre_tool_hook(event):
+    event.logger.info(f"Checking {event.tool_name} command")
+    
     if event.tool_name == "Bash":
         command = event.input.get("command", "")
         if "dangerous" in command:
+            event.logger.warning(f"Blocking dangerous command: {command}")
             return event.block("Dangerous command detected")
     
     return event.neutral()

@@ -101,7 +101,7 @@ def hook2(event):
     return event.undefined()
 
 if __name__ == "__main__":
-    run_hooks([hook1, hook2])
+    run_hooks(hook1, hook2)
 """
 
         hook_file = tmp_path / "multi_hook.py"
@@ -728,3 +728,156 @@ if __name__ == "__main__":
         assert (
             "Critical file access requires manual approval" in json_output["stopReason"]
         )
+
+    def test_logging_format_with_multiple_functions(self, tmp_path):
+        """Test that logging format correctly shows framework vs function logging."""
+        hook_content = """
+from claude_hooks import run_hooks
+
+def first_function(event):
+    event.logger.info("First function executed")
+    return event.undefined()
+
+def second_function(event):
+    event.logger.info("Second function executed")
+    return event.undefined()
+
+if __name__ == "__main__":
+    run_hooks(first_function, second_function)
+"""
+
+        hook_file = tmp_path / "multi_function_hook.py"
+        hook_file.write_text(hook_content)
+
+        # Create logs directory
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+
+        payload = {
+            "hook_event_name": "Notification",
+            "tool_name": None,
+            "tool_input": {},
+        }
+
+        # Run the hook
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            cwd=str(tmp_path),
+        )
+
+        assert result.returncode == 0
+
+        # Check that notification.log was created
+        log_file = logs_dir / "notification.log"
+        assert log_file.exists()
+
+        # Read log contents
+        log_content = log_file.read_text()
+        log_lines = log_content.strip().split("\n")
+
+        # Verify framework logging appears first with [hook_utils] identifier
+        framework_lines = [line for line in log_lines if "[hook_utils]" in line]
+        assert (
+            len(framework_lines) >= 2
+        )  # Should have "Running 2 hooks" and "Raw payload"
+        assert any(
+            "Running 2 hooks for Notification" in line for line in framework_lines
+        )
+
+        # Verify function logging appears with proper function names
+        first_func_lines = [
+            line
+            for line in log_lines
+            if "[first_function]" in line and "First function executed" in line
+        ]
+        second_func_lines = [
+            line
+            for line in log_lines
+            if "[second_function]" in line and "Second function executed" in line
+        ]
+
+        assert len(first_func_lines) == 1, (
+            f"Expected 1 first_function log line, got {len(first_func_lines)}"
+        )
+        assert len(second_func_lines) == 1, (
+            f"Expected 1 second_function log line, got {len(second_func_lines)}"
+        )
+
+        # Verify order: initial framework logs should come before function logs
+        initial_framework_lines = [
+            i
+            for i, line in enumerate(log_lines)
+            if "[hook_utils]" in line and ("Running" in line or "Raw payload" in line)
+        ]
+        function_line_indices = [
+            i
+            for i, line in enumerate(log_lines)
+            if "[first_function]" in line or "[second_function]" in line
+        ]
+
+        assert len(initial_framework_lines) >= 2, (
+            "Should have initial framework logs (Running hooks + Raw payload)"
+        )
+        assert len(function_line_indices) == 2, (
+            "Should have exactly 2 function log lines"
+        )
+        assert max(initial_framework_lines) < min(function_line_indices), (
+            "Initial framework logs should appear before function logs"
+        )
+
+    def test_logging_level_environment_variable(self, tmp_path, monkeypatch):
+        """Test that CLAUDE_HOOKS_LOG_LEVEL environment variable controls logging level."""
+        # Set DEBUG level
+        monkeypatch.setenv("CLAUDE_HOOKS_LOG_LEVEL", "DEBUG")
+        
+        hook_content = '''
+from claude_hooks import run_hooks
+
+def debug_function(event):
+    event.logger.debug("Debug message should appear")
+    event.logger.info("Info message should appear")
+    return event.undefined()
+
+if __name__ == "__main__":
+    run_hooks(debug_function)
+'''
+        
+        hook_file = tmp_path / "debug_hook.py"
+        hook_file.write_text(hook_content)
+        
+        # Create logs directory
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        
+        payload = {
+            "hook_event_name": "Notification",
+            "tool_name": None,
+            "tool_input": {},
+        }
+        
+        # Run the hook
+        result = subprocess.run(
+            [sys.executable, str(hook_file)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=10,
+            cwd=str(tmp_path),
+        )
+        
+        assert result.returncode == 0
+        
+        # Check that notification.log was created
+        log_file = logs_dir / "notification.log"
+        assert log_file.exists()
+        
+        # Read log contents
+        log_content = log_file.read_text()
+        
+        # Verify both DEBUG and INFO messages appear
+        assert "[debug_function] DEBUG: Debug message should appear" in log_content
+        assert "[debug_function] INFO: Info message should appear" in log_content
