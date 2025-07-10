@@ -307,6 +307,8 @@ def init(
     if not pyproject_path.exists():
         pyproject_content = """[project]
 name = "claude-hooks-config"
+version = "0.1.0"
+requires-python = ">=3.12"
 dependencies = [
     "claude-hooks",
 ]

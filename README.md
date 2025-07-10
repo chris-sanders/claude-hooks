@@ -283,6 +283,26 @@ This framework is fully compatible with Claude Code's official hook specificatio
 - **Hook Input Format**: [https://docs.anthropic.com/en/docs/claude-code/hooks#hook-input](https://docs.anthropic.com/en/docs/claude-code/hooks#hook-input)
 - **Hook Output Format**: [https://docs.anthropic.com/en/docs/claude-code/hooks#hook-output](https://docs.anthropic.com/en/docs/claude-code/hooks#hook-output)
 
+## Testing Hooks
+
+After creating or editing hook files, test them to catch runtime errors before they affect Claude Code sessions:
+
+```bash
+# From your hooks directory (where pyproject.toml is located)
+cd ~/.claude/hooks  # or cd ./hooks for project hooks
+
+# Test hook types with sample data
+uv run claude-hooks test notification --message "Test notification" -v
+uv run claude-hooks test pre-tool-use --tool "Bash" --command "ls -la" -v  
+uv run claude-hooks test post-tool-use --tool "Read" --output "file contents" -v
+uv run claude-hooks test stop --session-id "test-123" -v
+
+# See all test options
+uv run claude-hooks test --help
+```
+
+**Important**: Always run tests from the hooks directory after editing any hook files. Failed hooks show detailed error messages and stack traces to help debug issues.
+
 ## Convenience Features
 
 This framework adds developer-friendly features on top of the upstream specification:
