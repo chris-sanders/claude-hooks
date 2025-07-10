@@ -8,7 +8,7 @@ Python utilities for handling Claude Code hooks with a framework for creating ev
 - Support for PreToolUse, PostToolUse, Notification, Stop, and SubagentStop events
 - Built-in logging with automatic rotation
 - CLI tool for initializing hook templates and managing settings
-- Easy-to-use hook classes with utility methods
+- Easy-to-use event classes with utility methods
 
 ## Installation
 
@@ -49,16 +49,16 @@ if __name__ == "__main__":
     run_hooks(my_hook)
 ```
 
-### Using Hook Classes
+### Using Event Classes
 
 ```python
-from claude_hooks import PreToolUseHook, HookContext, run_hooks, neutral
+from claude_hooks import PreToolUse, HookContext, run_hooks, neutral
 
 def pre_tool_hook(ctx: HookContext):
-    hook = PreToolUseHook(ctx)
+    event = PreToolUse(ctx)
     
-    if hook.tool_name == "Bash":
-        command = hook.get_input("command")
+    if event.tool_name == "Bash":
+        command = event.get_input("command")
         # Validate command logic
     
     return neutral()

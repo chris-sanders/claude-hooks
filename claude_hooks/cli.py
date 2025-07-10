@@ -36,16 +36,16 @@ Pre-tool-use hook example for claude-hooks.
 This hook can validate and potentially block tool execution.
 """
 
-from claude_hooks import HookContext, PreToolUseHook, run_hooks, neutral, block
+from claude_hooks import HookContext, PreToolUse, run_hooks, neutral, block
 
 
 def pre_tool_use_hook(ctx: HookContext):
     """Validate tool usage before execution."""
-    hook = PreToolUseHook(ctx)
+    event = PreToolUse(ctx)
 
     # Example: Block dangerous bash commands
-    if hook.tool_name == "Bash":
-        command = hook.get_input("command", "")
+    if event.tool_name == "Bash":
+        command = event.get_input("command", "")
         if any(dangerous in command.lower() for dangerous in ["rm -rf", "sudo rm"]):
             return block(f"Dangerous command blocked: {command}")
 
@@ -60,15 +60,15 @@ Post-tool-use hook example for claude-hooks.
 This hook processes tool results after execution.
 """
 
-from claude_hooks import HookContext, PostToolUseHook, run_hooks, neutral
+from claude_hooks import HookContext, PostToolUse, run_hooks, neutral
 
 
 def post_tool_use_hook(ctx: HookContext):
     """Process tool results after execution."""
-    hook = PostToolUseHook(ctx)
+    event = PostToolUse(ctx)
 
     # Example: Log tool usage
-    print(f"Tool {hook.tool_name} executed successfully")
+    print(f"Tool {event.tool_name} executed successfully")
 
     return neutral()
 
@@ -81,12 +81,12 @@ Stop hook example for claude-hooks.
 This hook runs when Claude finishes a conversation.
 """
 
-from claude_hooks import HookContext, StopHook, run_hooks, neutral
+from claude_hooks import HookContext, Stop, run_hooks, neutral
 
 
 def stop_hook(ctx: HookContext):
     """Handle conversation stop events."""
-    hook = StopHook(ctx)
+    event = Stop(ctx)
 
     # Example: Log conversation end
     print("Claude conversation ended")
@@ -102,12 +102,12 @@ Subagent stop hook example for claude-hooks.
 This hook runs when a Claude subagent stops.
 """
 
-from claude_hooks import HookContext, SubagentStopHook, run_hooks, neutral
+from claude_hooks import HookContext, SubagentStop, run_hooks, neutral
 
 
 def subagent_stop_hook(ctx: HookContext):
     """Handle subagent stop events."""
-    hook = SubagentStopHook(ctx)
+    event = SubagentStop(ctx)
 
     # Example: Log subagent completion
     print("Claude subagent stopped")

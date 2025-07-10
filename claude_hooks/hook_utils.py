@@ -282,12 +282,12 @@ def _execute_hook(hook, ctx: HookContext) -> HookResult:
 
 
 # ============================================================================
-# CLASS-BASED HOOK FRAMEWORK
+# CLASS-BASED EVENT FRAMEWORK
 # ============================================================================
 
 
-class BaseHook:
-    """Base class for event-specific hook helpers with validation and field access."""
+class BaseEvent:
+    """Base class for event-specific helpers with validation and field access."""
 
     def __init__(self, ctx: HookContext):
         self.ctx = ctx
@@ -327,8 +327,8 @@ class BaseHook:
         return current
 
 
-class NotificationHook(BaseHook):
-    """Hook for Notification events"""
+class Notification(BaseEvent):
+    """Helper for Notification events"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -351,8 +351,8 @@ class NotificationHook(BaseHook):
         return bool(self.message)
 
 
-class ToolHook(BaseHook):
-    """Base class for tool-related hooks (PreToolUse, PostToolUse)"""
+class ToolEvent(BaseEvent):
+    """Base class for tool-related events (PreToolUse, PostToolUse)"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -375,16 +375,16 @@ class ToolHook(BaseHook):
         return self.tool_input.get(key, default)
 
 
-class PreToolUseHook(ToolHook):
-    """Hook for PreToolUse events (before tool execution)"""
+class PreToolUse(ToolEvent):
+    """Helper for PreToolUse events (before tool execution)"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
         self._validate_event("PreToolUse")
 
 
-class PostToolUseHook(ToolHook):
-    """Hook for PostToolUse events (after tool execution)"""
+class PostToolUse(ToolEvent):
+    """Helper for PostToolUse events (after tool execution)"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -401,8 +401,8 @@ class PostToolUseHook(ToolHook):
         return self.tool_response.get(key, default)
 
 
-class StopHook(BaseHook):
-    """Hook for Stop events (when Claude finishes)"""
+class Stop(BaseEvent):
+    """Helper for Stop events (when Claude finishes)"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -417,8 +417,8 @@ class StopHook(BaseHook):
         return self.get_field("transcript_path")
 
 
-class SubagentStopHook(BaseHook):
-    """Hook for SubagentStop events (when Claude subagent stops)"""
+class SubagentStop(BaseEvent):
+    """Helper for SubagentStop events (when Claude subagent stops)"""
 
     def validate_required_fields(self):
         super().validate_required_fields()
@@ -433,30 +433,30 @@ class SubagentStopHook(BaseHook):
         return self.get_field("transcript_path")
 
 
-# Hook factory function
-def create_hook(ctx: HookContext) -> BaseHook:
+# Event factory function
+def create_event(ctx: HookContext) -> BaseEvent:
     """
-    Create appropriate hook instance based on event type
+    Create appropriate event instance based on event type
 
     Args:
         ctx: Hook context
 
     Returns:
-        Event-specific hook instance
+        Event-specific helper instance
     """
-    hook_classes = {
-        "Notification": NotificationHook,
-        "PreToolUse": PreToolUseHook,
-        "PostToolUse": PostToolUseHook,
-        "Stop": StopHook,
-        "SubagentStop": SubagentStopHook,
+    event_classes = {
+        "Notification": Notification,
+        "PreToolUse": PreToolUse,
+        "PostToolUse": PostToolUse,
+        "Stop": Stop,
+        "SubagentStop": SubagentStop,
     }
 
-    hook_class = hook_classes.get(ctx.event)
-    if not hook_class:
-        raise ValueError(f"Unknown hook event: {ctx.event}")
+    event_class = event_classes.get(ctx.event)
+    if not event_class:
+        raise ValueError(f"Unknown event type: {ctx.event}")
 
-    return hook_class(ctx)
+    return event_class(ctx)
 
 
 # ============================================================================

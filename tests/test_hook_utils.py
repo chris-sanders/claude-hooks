@@ -12,14 +12,14 @@ import pytest
 
 from claude_hooks.hook_utils import (
     HookContext,
-    NotificationHook,
-    PostToolUseHook,
-    PreToolUseHook,
-    StopHook,
-    SubagentStopHook,
+    Notification,
+    PostToolUse,
+    PreToolUse,
+    Stop,
+    SubagentStop,
     approve,
     block,
-    create_hook,
+    create_event,
     neutral,
 )
 
@@ -207,11 +207,11 @@ class TestHookClasses:
             full_payload=payload,
         )
 
-        hook = NotificationHook(ctx)
-        assert hook.message == "Claude has started a new conversation"
-        assert hook.session_id == "session-123"
-        assert hook.transcript_path == "/tmp/transcript.txt"
-        assert hook.has_message is True
+        event = Notification(ctx)
+        assert event.message == "Claude has started a new conversation"
+        assert event.session_id == "session-123"
+        assert event.transcript_path == "/tmp/transcript.txt"
+        assert event.has_message is True
 
     def test_pre_tool_use_hook_real_usage(self):
         """Test PreToolUseHook with realistic command validation."""
@@ -234,11 +234,11 @@ class TestHookClasses:
             full_payload=payload,
         )
 
-        hook = PreToolUseHook(ctx)
-        assert hook.tool_name == "Edit"
-        assert hook.get_input("file_path") == "/secure/config.py"
-        assert hook.get_input("old_string") == "debug=False"
-        assert hook.get_input("nonexistent", "default") == "default"
+        event = PreToolUse(ctx)
+        assert event.tool_name == "Edit"
+        assert event.get_input("file_path") == "/secure/config.py"
+        assert event.get_input("old_string") == "debug=False"
+        assert event.get_input("nonexistent", "default") == "default"
 
     def test_post_tool_use_hook_real_usage(self):
         """Test PostToolUseHook with realistic tool response data."""
@@ -262,11 +262,11 @@ class TestHookClasses:
             full_payload=payload,
         )
 
-        hook = PostToolUseHook(ctx)
-        assert hook.tool_name == "Bash"
-        assert "file1.txt" in hook.get_response("output")
-        assert hook.get_response("exit_code") == 0
-        assert hook.get_response("nonexistent", "default") == "default"
+        event = PostToolUse(ctx)
+        assert event.tool_name == "Bash"
+        assert "file1.txt" in event.get_response("output")
+        assert event.get_response("exit_code") == 0
+        assert event.get_response("nonexistent", "default") == "default"
 
     def test_stop_hook_real_usage(self):
         """Test StopHook with realistic conversation end data."""
@@ -281,9 +281,9 @@ class TestHookClasses:
             event="Stop", tool=None, input=payload, response=None, full_payload=payload
         )
 
-        hook = StopHook(ctx)
-        assert hook.session_id == "session-end-123"
-        assert hook.transcript_path == "/logs/conversation_transcript.md"
+        event = Stop(ctx)
+        assert event.session_id == "session-end-123"
+        assert event.transcript_path == "/logs/conversation_transcript.md"
 
     def test_subagent_stop_hook_real_usage(self):
         """Test SubagentStopHook with realistic subagent data."""
@@ -302,18 +302,18 @@ class TestHookClasses:
             full_payload=payload,
         )
 
-        hook = SubagentStopHook(ctx)
-        assert hook.session_id == "subagent-456"
-        assert hook.transcript_path == "/logs/subagent_log.md"
+        event = SubagentStop(ctx)
+        assert event.session_id == "subagent-456"
+        assert event.transcript_path == "/logs/subagent_log.md"
 
     def test_create_hook_factory_works(self):
         """Test create_hook factory with all event types."""
         test_cases = [
-            ("Notification", NotificationHook),
-            ("PreToolUse", PreToolUseHook),
-            ("PostToolUse", PostToolUseHook),
-            ("Stop", StopHook),
-            ("SubagentStop", SubagentStopHook),
+            ("Notification", Notification),
+            ("PreToolUse", PreToolUse),
+            ("PostToolUse", PostToolUse),
+            ("Stop", Stop),
+            ("SubagentStop", SubagentStop),
         ]
 
         for event_name, expected_class in test_cases:
@@ -325,8 +325,8 @@ class TestHookClasses:
                 full_payload={"hook_event_name": event_name},
             )
 
-            hook = create_hook(ctx)
-            assert isinstance(hook, expected_class)
+            event = create_event(ctx)
+            assert isinstance(event, expected_class)
 
     def test_create_hook_with_unknown_event_fails(self):
         """Test create_hook fails gracefully with unknown events."""
@@ -334,8 +334,8 @@ class TestHookClasses:
             event="UnknownEvent", tool=None, input={}, response=None, full_payload={}
         )
 
-        with pytest.raises(ValueError, match="Unknown hook event: UnknownEvent"):
-            create_hook(ctx)
+        with pytest.raises(ValueError, match="Unknown event type: UnknownEvent"):
+            create_event(ctx)
 
 
 class TestConvenienceFunctions:
@@ -365,13 +365,13 @@ class TestRealWorldScenarios:
     def test_security_hook_blocks_sensitive_file_access(self, tmp_path):
         """Test a realistic security hook that protects sensitive files."""
         hook_content = """
-from claude_hooks.hook_utils import HookContext, PreToolUseHook, run_hooks, neutral, block
+from claude_hooks.hook_utils import HookContext, PreToolUse, run_hooks, neutral, block
 
 def security_hook(ctx: HookContext):
-    hook = PreToolUseHook(ctx)
+    event = PreToolUse(ctx)
 
-    if hook.tool_name in ["Edit", "Write", "Read"]:
-        file_path = hook.get_input("file_path", "")
+    if event.tool_name in ["Edit", "Write", "Read"]:
+        file_path = event.get_input("file_path", "")
         if any(sensitive in file_path.lower() for sensitive in [".env", "secret", "password", "key"]):
             return block(f"Access to sensitive file blocked: {file_path}")
 
@@ -412,20 +412,20 @@ if __name__ == "__main__":
         log_file = tmp_path / "audit.log"
 
         hook_content = f'''
-from claude_hooks.hook_utils import HookContext, PostToolUseHook, run_hooks, neutral
+from claude_hooks.hook_utils import HookContext, PostToolUse, run_hooks, neutral
 import json
 from datetime import datetime
 
 def audit_hook(ctx: HookContext):
-    hook = PostToolUseHook(ctx)
+    event = PostToolUse(ctx)
 
     # Log tool usage
     log_entry = {{
         "timestamp": datetime.now().isoformat(),
-        "tool": hook.tool_name,
-        "session": hook.session_id,
-        "input": dict(hook.tool_input),
-        "success": hook.get_response("error", "") == ""
+        "tool": event.tool_name,
+        "session": event.session_id,
+        "input": dict(event.tool_input),
+        "success": event.get_response("error", "") == ""
     }}
 
     with open("{log_file}", "a") as f:

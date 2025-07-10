@@ -51,7 +51,7 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 - `HookContext` - Raw hook context from Claude Code with event, tool, input, and response data
 - `HookResult` - Result object with `Decision` enum (BLOCK, APPROVE, NEUTRAL)
 - `run_hooks()` - Framework runner supporting single or multiple hooks with parallel execution
-- Event-specific hook classes: `NotificationHook`, `PreToolUseHook`, `PostToolUseHook`, `StopHook`
+- Event-specific helper classes: `Notification`, `PreToolUse`, `PostToolUse`, `Stop`
 - Convenience functions: `block()`, `approve()`, `neutral()`
 
 ### Hook Event System
@@ -100,17 +100,17 @@ if __name__ == "__main__":
     run_hooks(my_hook)
 ```
 
-### Using Event-Specific Hook Classes
+### Using Event-Specific Helper Classes
 
 ```python
-from hook_utils import PreToolUseHook, create_hook
+from hook_utils import PreToolUse, create_event
 
 def my_pre_tool_hook(ctx: HookContext):
-    hook = PreToolUseHook(ctx)
-    # or use: hook = create_hook(ctx)
+    event = PreToolUse(ctx)
+    # or use: event = create_event(ctx)
     
-    if hook.tool_name == "Bash":
-        command = hook.get_input("command")
+    if event.tool_name == "Bash":
+        command = event.get_input("command")
         # Validate command logic
     
     return neutral()
