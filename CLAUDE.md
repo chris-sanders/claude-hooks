@@ -11,9 +11,30 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 ## Commands
 
 ### Development Commands
-- `uv run pytest` - Run tests
-- `uv run black .` - Format code with Black
-- `uv run python -m src.hook_utils` - Test the hook_utils module directly
+
+#### Testing
+- `uv run ruff check --fix . && uv run ruff format . && uv run pytest` - Full development check (lint + format + test)
+- `uv run pytest` - Run tests only
+- `uv run pytest -v` - Run tests with verbose output
+- `uv cache clean && uv run pytest` - Clear cache and run tests (when CLI changes aren't reflected)
+
+**Important**: Always run ruff before pytest to avoid multiple test cycles due to formatting changes. Use `--fix` to auto-fix linting issues.
+
+#### Code Quality
+- `uv run ruff check .` - Lint code with Ruff
+- `uv run ruff format .` - Format code with Ruff  
+- `uv run ruff check --fix .` - Lint and auto-fix issues
+
+#### Direct Module Testing
+- `uv run python -m claude_hooks.hook_utils` - Test the hook_utils module directly
+
+**See** `tests/README.md` for detailed testing strategy and best practices.
+
+### CLI Commands (for testing during development)
+- `uvx --from . claude-hooks init` - Initialize all hook templates
+- `uvx --from . claude-hooks init --notification` - Initialize only notification hook
+- `uvx --from . claude-hooks init --pre-tool-use --stop` - Initialize specific hooks
+- `uvx --from . claude-hooks create notification.py` - Create single hook file
 
 ### Running Development Examples
 - `uv run examples/notification.py` - Run notification hook example (development only)
@@ -26,7 +47,7 @@ This is a Python utility library for handling Claude Code hooks. It provides a f
 
 ### Core Components
 
-**`src/hook_utils.py`** - The main framework providing:
+**`claude_hooks/hook_utils.py`** - The main framework providing:
 - `HookContext` - Raw hook context from Claude Code with event, tool, input, and response data
 - `HookResult` - Result object with `Decision` enum (BLOCK, APPROVE, NEUTRAL)
 - `run_hooks()` - Framework runner supporting single or multiple hooks with parallel execution
@@ -50,6 +71,19 @@ Hooks receive JSON payloads from Claude Code via stdin and must exit with specif
 ### Logging
 
 All hooks automatically get rotating file logging in `logs/` directory with format `{event}_{hook_name}_hooks.log`. Logs are limited to 10MB with 5 backup files.
+
+## Development Philosophy
+
+### Consistency and Simplicity
+- **Use `uv` exclusively** - All commands, examples, and tooling assume `uv` is available
+- **Avoid backwards compatibility** - Do not add fallbacks or support for multiple options unless explicitly required by design
+- **Single path forward** - Choose one approach and stick with it consistently across the project
+- **Explicit approval required** - Any deviation from this principle needs explicit design approval
+
+### Tool Dependencies
+- `uv` - Package management, script running, dependency installation
+- `ruff` - Linting and formatting (no Black, no other formatters)
+- `pytest` - Testing (no other test frameworks)
 
 ## Development Patterns
 

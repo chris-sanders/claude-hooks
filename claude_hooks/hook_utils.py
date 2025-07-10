@@ -4,15 +4,16 @@ hook_utils.py - Shared utilities for Claude Code hooks
 
 Provides HookContext, HookResult, and run_hooks() for standardized hook development.
 """
-import sys
+
 import json
 import logging
 import logging.handlers
 import subprocess
-from typing import Dict, Any, Optional, Tuple
+import sys
 from dataclasses import dataclass
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 # ============================================================================
 # CORE FRAMEWORK CLASSES
@@ -32,10 +33,10 @@ class HookContext:
     """Raw hook context from Claude Code. Use specific hook classes for structured access."""
 
     event: str
-    tool: Optional[str]
-    input: Dict[str, Any]
-    response: Optional[Dict[str, Any]] = None
-    full_payload: Dict[str, Any] = None
+    tool: str | None
+    input: dict[str, Any]
+    response: dict[str, Any] | None = None
+    full_payload: dict[str, Any] = None
 
     @classmethod
     def from_stdin(cls) -> "HookContext":
@@ -104,7 +105,7 @@ class HookResult:
 # ============================================================================
 
 
-def setup_logging(hook_name: str, event_name: str = None) -> None:
+def setup_logging(hook_name: str, event_name: str | None = None) -> None:
     """Setup logging for a specific hook"""
     import inspect
 
@@ -127,18 +128,17 @@ def setup_logging(hook_name: str, event_name: str = None) -> None:
 
     # Create log filename based on event and function name
     if event_name and event_name.lower() != hook_name.lower():
-        log_filename = f"{event_name.lower()}_{hook_name}_hooks.log"
+        log_filename = f"{event_name.lower()}_{hook_name}.log"
     else:
-        log_filename = f"{hook_name}_hooks.log"
-    
+        log_filename = f"{hook_name}.log"
+
     # Create rotating file handler (10MB max, keep 5 files)
     file_handler = logging.handlers.RotatingFileHandler(
         log_dir / log_filename,
-        maxBytes=10 * 1024 * 1024,  # 10MB
+        maxBytes=5 * 1024 * 1024,  # 5MB
         backupCount=5,
         encoding="utf-8",
     )
-    file_handler.flush = lambda: file_handler.stream.flush()
 
     # Create stream handler
     stream_handler = logging.StreamHandler(sys.stderr)
@@ -150,9 +150,7 @@ def setup_logging(hook_name: str, event_name: str = None) -> None:
         force=True,  # Clear any existing handlers
     )
 
-    # Force immediate flushing after each log message
-    for handler in logging.getLogger().handlers:
-        handler.flush()
+    # Note: Removed manual flush override to avoid shell spawn issues
 
 
 # ============================================================================
@@ -160,7 +158,7 @@ def setup_logging(hook_name: str, event_name: str = None) -> None:
 # ============================================================================
 
 
-def run_command(command: list, timeout: int = 30) -> Tuple[bool, str, str]:
+def run_command(command: list, timeout: int = 30) -> tuple[bool, str, str]:
     """
     Run a shell command safely
 
@@ -198,7 +196,7 @@ def run_hooks(hooks) -> None:
 
     # Validate input
     if not hooks:
-        logging.error(f"No hooks provided")
+        logging.error("No hooks provided")
         sys.exit(1)
 
     # Introspect hook name from first hook
@@ -252,6 +250,9 @@ def run_hooks(hooks) -> None:
                     if result.decision == Decision.BLOCK:
                         logging.info(f"Hook {hook_name_individual} blocked operation")
                         result.exit_with_result()
+                    elif result.decision == Decision.APPROVE:
+                        logging.info(f"Hook {hook_name_individual} approved operation")
+                        result.exit_with_result()
 
                 except Exception as e:
                     logging.error(f"Hook {hook_name_individual} failed: {e}")
@@ -263,7 +264,7 @@ def run_hooks(hooks) -> None:
         sys.exit(0)
 
     except KeyboardInterrupt:
-        logging.info(f"Hooks interrupted by user")
+        logging.info("Hooks interrupted by user")
         sys.exit(1)
     except Exception as e:
         logging.error(f"Hooks failed: {e}")
@@ -277,7 +278,7 @@ def _execute_hook(hook, ctx: HookContext) -> HookResult:
             raise ValueError(f"Hook must be a callable function, got {type(hook)}")
         return hook(ctx)
     except Exception as e:
-        raise Exception(f"Hook execution failed: {e}")
+        raise Exception(f"Hook execution failed: {e}") from e
 
 
 # ============================================================================
@@ -334,15 +335,15 @@ class NotificationHook(BaseHook):
         self._validate_event("Notification")
 
     @property
-    def message(self) -> Optional[str]:
+    def message(self) -> str | None:
         return self.get_field("message")
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         return self.get_field("session_id")
 
     @property
-    def transcript_path(self) -> Optional[str]:
+    def transcript_path(self) -> str | None:
         return self.get_field("transcript_path")
 
     @property
@@ -362,11 +363,11 @@ class ToolHook(BaseHook):
         return self.ctx.tool
 
     @property
-    def tool_input(self) -> Dict[str, Any]:
+    def tool_input(self) -> dict[str, Any]:
         return self.ctx.input
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         return self.get_field("session_id")
 
     def get_input(self, key: str, default=None):
@@ -392,7 +393,7 @@ class PostToolUseHook(ToolHook):
             raise ValueError("PostToolUse event missing tool_response")
 
     @property
-    def tool_response(self) -> Dict[str, Any]:
+    def tool_response(self) -> dict[str, Any]:
         return self.ctx.response
 
     def get_response(self, key: str, default=None):
@@ -408,11 +409,27 @@ class StopHook(BaseHook):
         self._validate_event("Stop")
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         return self.get_field("session_id")
 
     @property
-    def transcript_path(self) -> Optional[str]:
+    def transcript_path(self) -> str | None:
+        return self.get_field("transcript_path")
+
+
+class SubagentStopHook(BaseHook):
+    """Hook for SubagentStop events (when Claude subagent stops)"""
+
+    def validate_required_fields(self):
+        super().validate_required_fields()
+        self._validate_event("SubagentStop")
+
+    @property
+    def session_id(self) -> str | None:
+        return self.get_field("session_id")
+
+    @property
+    def transcript_path(self) -> str | None:
         return self.get_field("transcript_path")
 
 
@@ -432,7 +449,7 @@ def create_hook(ctx: HookContext) -> BaseHook:
         "PreToolUse": PreToolUseHook,
         "PostToolUse": PostToolUseHook,
         "Stop": StopHook,
-        "SubagentStop": StopHook,  # Same as Stop for now
+        "SubagentStop": SubagentStopHook,
     }
 
     hook_class = hook_classes.get(ctx.event)
