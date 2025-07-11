@@ -51,11 +51,11 @@ When you run `init`, this framework creates a specific folder structure:
 │   ├── post_tool_use.py
 │   ├── stop.py
 │   ├── subagent_stop.py
-│   └── pre_compact.py
-├── logs/                     # Auto-created when hooks run
-│   ├── notification.log
-│   ├── pretooluse.log
-│   └── ...
+│   ├── pre_compact.py
+│   └── logs/                 # Auto-created when hooks run
+│       ├── notification.log
+│       ├── pretooluse.log
+│       └── ...
 └── settings.json             # Claude Code configuration
 ```
 
@@ -65,9 +65,9 @@ When you run `init`, this framework creates a specific folder structure:
 - Settings: `~/.claude/settings.json`
 
 **For project hooks:**
-- Hook files: `./hooks/*.py`
-- Log files: `./logs/*.log`
-- Settings: `./settings.json`
+- Hook files: `./.claude/hooks/*.py`
+- Log files: `./.claude/hooks/logs/*.log`
+- Settings: `./.claude/settings.json`
 
 ## Global vs Project Hooks
 
