@@ -169,19 +169,53 @@ def get_hook_command_path(
     # Hook files are always in the hooks subdirectory
     hook_path = target_dir / "hooks" / filename
 
-    # Override detection if explicitly specified
+    # Use --project flag to ensure uv runs in hooks directory context
+    # Override detection if explicitly specified for backwards compatibility
     if force_global is True:
-        return f"uv run {hook_path}"
+        return f"uv run --project {target_dir}/hooks {hook_path}"
     elif force_global is False:
-        return f"uv run hooks/{filename}"
+        # Calculate relative path from likely Claude execution directory to hooks directory
+        hooks_dir = target_dir / "hooks"
+        relative_hooks_dir = _calculate_relative_path_for_claude(target_dir, hooks_dir)
+        return f"uv run --project {relative_hooks_dir} {relative_hooks_dir}/{filename}"
 
     # Auto-detect based on location
     if is_global_config_location(target_dir):
-        # Global: use absolute path
-        return f"uv run {hook_path}"
+        # Global: use absolute path with project directory
+        return f"uv run --project {target_dir}/hooks {hook_path}"
     else:
-        # Project: use relative path
-        return f"uv run hooks/{filename}"
+        # Project: use relative path from likely Claude execution directory to hooks directory
+        hooks_dir = target_dir / "hooks"
+        relative_hooks_dir = _calculate_relative_path_for_claude(target_dir, hooks_dir)
+        return f"uv run --project {relative_hooks_dir} {relative_hooks_dir}/{filename}"
+
+
+def _calculate_relative_path_for_claude(target_dir: Path, hooks_dir: Path) -> str:
+    """Calculate the relative path from where Claude will likely be run to the hooks directory."""
+    # If target_dir is named '.claude', Claude will likely be run from its parent
+    if target_dir.name == ".claude":
+        # Claude runs from parent directory, so path is .claude/hooks
+        return ".claude/hooks"
+
+    # If we're currently in a .claude directory, assume Claude runs from parent
+    current_dir = Path.cwd()
+    if current_dir.name == ".claude":
+        # We're in .claude, Claude runs from parent, calculate relative path
+        try:
+            claude_run_dir = current_dir.parent
+            relative_hooks_dir = hooks_dir.relative_to(claude_run_dir)
+            return str(relative_hooks_dir)
+        except ValueError:
+            # Fallback to absolute path if calculation fails
+            return str(hooks_dir)
+
+    # Default case: calculate from current working directory
+    try:
+        relative_hooks_dir = hooks_dir.relative_to(Path.cwd())
+        return str(relative_hooks_dir)
+    except ValueError:
+        # Fallback to absolute path if calculation fails
+        return str(hooks_dir)
 
 
 def merge_settings(
